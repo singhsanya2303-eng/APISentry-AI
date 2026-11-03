@@ -1,130 +1,348 @@
 # APISentry AI
 
-**Intelligent API Security Monitoring and Threat Detection System**
+### Intelligent API Security Monitoring and Threat Detection System
 
-APISentry AI is a web-based API security monitoring and threat detection project built to analyze API traffic and identify potentially suspicious request patterns. It combines multiple detection modules with a FastAPI backend and a React dashboard to provide security insights and risk analysis.
+APISentry AI is an API security monitoring and threat detection platform designed to analyze API traffic, identify suspicious request patterns, and generate security insights through a web-based dashboard.
 
-> **Project status:** Academic / development project. Detection results are based on the traffic data supplied to the system. They should not be treated as proof of real-world attacks without further validation.
+The system combines behavioral analysis, rule-based detection, anomaly detection, and machine learning techniques to identify potentially malicious API activity.
+
+It consists of a **FastAPI backend**, a **React frontend**, and a database layer using **SQLAlchemy and PostgreSQL**.
+
+---
+
+## Table of Contents
+
+1. [Project Overview](#project-overview)
+2. [Objectives](#objectives)
+3. [Key Features](#key-features)
+4. [System Architecture](#system-architecture)
+5. [Detection Modules](#detection-modules)
+6. [Technology Stack](#technology-stack)
+7. [Project Structure](#project-structure)
+8. [Installation and Setup](#installation-and-setup)
+9. [Running the Application](#running-the-application)
+10. [API Security](#api-security)
+11. [Testing](#testing)
+12. [Limitations](#limitations)
+13. [Future Enhancements](#future-enhancements)
+14. [Author](#author)
+
+---
+
+## Project Overview
+
+Modern applications rely heavily on APIs to exchange information between frontend applications, backend services, and external systems.
+
+However, APIs can be exposed to several security risks, including:
+
+- Broken Object Level Authorization (BOLA).
+- Brute-force attempts.
+- Abnormal request rates.
+- Suspicious user behavior.
+- Token-related security issues.
+- Unusual API traffic patterns.
+
+Traditional API monitoring often focuses on availability and performance. APISentry AI focuses on analyzing API request behavior and identifying potentially suspicious activity.
+
+The platform processes API traffic through multiple detection modules and generates security-related insights to help developers understand potential threats.
+
+---
+
+## Objectives
+
+The primary objectives of APISentry AI are:
+
+- Analyze API request patterns and identify suspicious behavior.
+- Detect potentially malicious API activity using multiple detection techniques.
+- Identify abnormal traffic patterns and request-rate anomalies.
+- Detect possible BOLA and brute-force attack patterns.
+- Classify suspicious activity using risk levels.
+- Provide a centralized dashboard for monitoring API security insights.
+- Secure sensitive backend operations using authentication and API key protection.
+- Maintain structured data through a database layer.
+- Support automated testing of backend functionality.
+
+---
 
 ## Key Features
 
-- API traffic monitoring and analysis
-- Behavioral risk analysis
-- Broken Object Level Authorization (BOLA) detection
-- Brute-force activity detection
-- Rate anomaly detection
-- Traffic clustering and comparison
-- Token usage classification
-- Traffic trend analysis
-- Risk scoring and security insights
-- JWT-based authentication
-- API key protection for sensitive security endpoints
-- Interactive dashboard for viewing analysis results
+### 1. Multiple Threat Detection Modules
+
+The system contains seven detection modules that analyze different aspects of API traffic.
+
+### 2. Behavioral Analysis
+
+Analyzes request behavior and identifies unusual activity that may indicate suspicious usage.
+
+### 3. BOLA Detection
+
+Identifies potentially suspicious object-level access patterns that may indicate Broken Object Level Authorization vulnerabilities.
+
+### 4. Brute-Force Detection
+
+Analyzes repeated request attempts to identify patterns associated with brute-force activity.
+
+### 5. Rate Anomaly Detection
+
+Identifies unusual request frequencies and abnormal traffic rates.
+
+### 6. Clustering-Based Analysis
+
+Uses clustering techniques to identify groups and patterns within API traffic data.
+
+### 7. Token Classification
+
+Analyzes token-related characteristics to support security classification.
+
+### 8. Traffic Trend Analysis
+
+Analyzes API traffic trends to identify unusual patterns and changes in request activity.
+
+### 9. Authentication and API Security
+
+Includes JWT-based authentication and API key protection for sensitive backend operations.
+
+### 10. Interactive Dashboard
+
+Provides a React-based frontend for interacting with the backend and viewing API security information.
+
+---
+
+## System Architecture
+
+The following diagram illustrates the high-level architecture of APISentry AI.
+
+```mermaid
+flowchart TB
+    U["User"] --> FE["React 19 + Vite Dashboard"]
+    FE -->|"REST API / HTTP"| API["FastAPI Backend"]
+
+    subgraph BACKEND["Backend - FastAPI"]
+        API --> AUTH["JWT Authentication"]
+        API --> SEC["API Key Security"]
+
+        AUTH --> ROUTER["API v1 Router"]
+        SEC --> ROUTER
+
+        ROUTER --> DET["Detection Services"]
+
+        subgraph ENGINE["Detection Engine"]
+            DET --> B["Behavioral Risk"]
+            DET --> BOLA["BOLA Detection"]
+            DET --> BF["Brute-Force Detection"]
+            DET --> RATE["Rate Anomaly"]
+            DET --> CL["Clustering"]
+            DET --> TOK["Token Classification"]
+            DET --> TT["Traffic Trend Analysis"]
+        end
+
+        DET --> DBL["SQLAlchemy Database Layer"]
+    end
+
+    DBL --> DB[("PostgreSQL")]
+    DET --> RESULT["Analysis Results / Risk Insights"]
+    RESULT --> API
+    API --> FE
+```
+
+### Architecture Explanation
+
+**Frontend Layer**
+
+- Built using React and Vite.
+- Provides the user interface and dashboard.
+- Communicates with the backend through HTTP-based API requests.
+
+**Backend Layer**
+
+- Built using FastAPI.
+- Handles incoming requests and application logic.
+- Provides API endpoints and connects the detection modules.
+- Implements authentication and API key security.
+
+**Detection Engine**
+
+- Contains seven individual detection modules.
+- Analyzes API traffic using different detection approaches.
+- Produces security-related analysis results.
+
+**Database Layer**
+
+- Uses SQLAlchemy for database operations.
+- Uses PostgreSQL for persistent data storage.
+
+---
 
 ## Detection Modules
 
 | Module | Purpose |
 |---|---|
-| Behavioral Risk | Identifies unusual API request behavior |
-| BOLA Detection | Analyzes potential object-level authorization issues |
-| Brute-Force Detection | Identifies repeated suspicious request attempts |
-| Rate Anomaly | Detects unusual request rates |
-| Clustering | Groups traffic patterns for comparison |
-| Token Classification | Classifies token usage patterns |
-| Traffic Trends | Analyzes traffic patterns and trends over time |
+| Behavioral Risk | Identifies unusual API request behavior. |
+| BOLA Detection | Identifies potentially suspicious object-level access patterns. |
+| Brute-Force Detection | Detects repeated attempts that may indicate brute-force activity. |
+| Rate Anomaly | Identifies abnormal request frequencies. |
+| Clustering | Groups traffic patterns using clustering techniques. |
+| Token Classification | Analyzes token-related characteristics. |
+| Traffic Trends | Analyzes API traffic patterns and changes over time. |
 
-Detection results depend on the available traffic data, configured thresholds, and analysis logic.
+Each module focuses on a different category of API security analysis. Their combined results provide a broader view of potentially suspicious API activity.
+
+---
 
 ## Technology Stack
 
 ### Backend
-- Python
-- FastAPI
-- SQLAlchemy
-- PostgreSQL
-- Pydantic
-- JWT authentication
-- Scikit-learn
-- PyTorch
-- NumPy
+
+| Technology | Purpose |
+|---|---|
+| Python | Core programming language |
+| FastAPI | Backend REST API framework |
+| SQLAlchemy | Database ORM |
+| PostgreSQL | Relational database |
+| Pydantic | Data validation and settings |
+| JWT | Token-based authentication |
+| NumPy | Numerical operations |
+| Scikit-learn | Machine learning and clustering |
+| PyTorch | Machine learning support |
+| Pytest | Backend testing |
+| HTTPX | API testing |
 
 ### Frontend
-- React 19
-- Vite
-- JavaScript
-- Recharts
-- Lucide React
 
-### Testing
-- Pytest
-- FastAPI TestClient
-- SQLite for isolated test database operations
+| Technology | Purpose |
+|---|---|
+| React 19 | Frontend library |
+| Vite | Frontend development and build tool |
+| JavaScript | Application logic |
+| HTML | Page structure |
+| CSS | Styling |
+
+### Development Tools
+
+- Git and GitHub
+- Visual Studio Code
+- PowerShell
+- Python Virtual Environment
+- npm
+
+---
 
 ## Project Structure
 
 ```text
 API-SENTRY-AI/
-│
-├── backend/
-│   ├── app/
-│   │   ├── api/
-│   │   │   └── v1/
-│   │   │       └── routes/
-│   │   ├── core/
-│   │   ├── db/
-│   │   ├── detection/
-│   │   ├── models/
-│   │   ├── schemas/
-│   │   ├── services/
-│   │   └── utils/
-│   ├── models/
-│   ├── tests/
-│   ├── .env.example
-│   ├── requirements.txt
-│   └── train_token_classifier.py
-│
-├── frontend/
-│   ├── public/
-│   ├── src/
-│   │   ├── components/
-│   │   ├── services/
-│   │   └── App.jsx
-│   ├── package.json
-│   └── vite.config.js
-│
-├── scripts/
-│   ├── generate_traffic_test_data.py
-│   └── simulate_bruteforce_demo.py
-│
-└── README.md
+|
+|-- backend/
+|   |-- app/
+|   |   |-- api/
+|   |   |-- core/
+|   |   |-- db/
+|   |   |-- detection/
+|   |   |-- models/
+|   |   |-- schemas/
+|   |   |-- services/
+|   |   `-- utils/
+|   |
+|   |-- models/
+|   |-- tests/
+|   |-- .env.example
+|   `-- requirements.txt
+|
+|-- frontend/
+|   |-- public/
+|   |-- src/
+|   |-- package.json
+|   `-- vite.config.js
+|
+|-- scripts/
+|
+`-- README.md
 ```
 
-## Prerequisites
+### Directory Description
 
-Install the following before running the project:
+**backend/app/api/**
 
-- Python 3.10 or later
-- Node.js and npm
-- PostgreSQL
-- Git
+Contains API routes and endpoint-related functionality.
+
+**backend/app/core/**
+
+Contains core application configuration and security-related functionality.
+
+**backend/app/db/**
+
+Contains database configuration and connection-related functionality.
+
+**backend/app/detection/**
+
+Contains the API security detection modules.
+
+**backend/app/models/**
+
+Contains application data models.
+
+**backend/app/schemas/**
+
+Contains data validation schemas.
+
+**backend/app/services/**
+
+Contains application service logic.
+
+**backend/app/utils/**
+
+Contains reusable utility functions.
+
+**backend/tests/**
+
+Contains backend automated tests.
+
+**frontend/src/**
+
+Contains the React frontend source code.
+
+**scripts/**
+
+Contains project utility scripts.
+
+---
 
 ## Installation and Setup
 
-### 1. Clone the repository
+### Prerequisites
+
+Install the following before running the project:
+
+- Python 3.10 or later.
+- Node.js and npm.
+- PostgreSQL.
+- Git.
+
+### 1. Clone the Repository
 
 ```bash
 git clone https://github.com/singhsanya2303-eng/APISentry-AI.git
+```
+
+Navigate to the project directory:
+
+```bash
 cd APISentry-AI
 ```
 
-### 2. Backend setup
+### 2. Backend Setup
 
-Create and activate a Python virtual environment.
+Create a Python virtual environment:
 
-**Windows PowerShell:**
+**Windows PowerShell**
 
 ```powershell
 python -m venv .venv
+```
+
+Activate the environment:
+
+```powershell
 .\.venv\Scripts\Activate.ps1
 ```
 
@@ -134,65 +352,91 @@ Install backend dependencies:
 pip install -r backend/requirements.txt
 ```
 
-### 3. Configure environment variables
+### 3. Environment Configuration
 
-Create your local environment file:
+Create your local environment configuration using the provided example:
 
 ```powershell
 Copy-Item backend/.env.example backend/.env
 ```
 
-Update `backend/.env` with your PostgreSQL configuration and a secure JWT secret.
+Update the environment variables according to your local configuration.
 
-Example database configuration:
+Configure the required database connection and security settings.
 
-```env
-PROJECT_NAME="APISentry AI"
-VERSION="0.1.0"
-ENVIRONMENT="development"
-DEBUG=True
+**Important:** Never commit real database passwords, API keys, JWT secrets, or other sensitive credentials to GitHub.
 
-POSTGRES_SERVER=localhost
-POSTGRES_PORT=5432
-POSTGRES_USER=postgres
-POSTGRES_PASSWORD=your_local_database_password
-POSTGRES_DB=apisentry_db
+### 4. Frontend Setup
 
-APISENTRY_ENABLE_DEMO_AUTH=false
+Navigate to the frontend directory:
+
+```powershell
+cd frontend
 ```
 
-Create the PostgreSQL database named `apisentry_db` before starting the backend.
+Install frontend dependencies:
 
-**Security:** Never commit `.env` files or real credentials to GitHub. Use unique, strong secrets outside development environments.
+```powershell
+npm install
+```
 
-### 4. Start the backend
+Return to the project root:
 
-From the project root:
+```powershell
+cd ..
+```
+
+---
+
+## Running the Application
+
+The backend and frontend run as separate development servers.
+
+### 1. Start the Backend
+
+Open a terminal at the project root.
+
+Activate the virtual environment:
+
+```powershell
+.\.venv\Scripts\Activate.ps1
+```
+
+Set the Python module path:
 
 ```powershell
 $env:PYTHONPATH = (Get-Location).Path
+```
+
+Start the FastAPI server:
+
+```powershell
 python -m uvicorn app.main:app --app-dir .\backend --reload
 ```
 
 Backend URL:
 
 ```text
-http://127.0.0.1:8000
+http://localhost:8000
 ```
 
-FastAPI interactive API documentation:
+FastAPI interactive documentation:
 
 ```text
-http://127.0.0.1:8000/docs
+http://localhost:8000/docs
 ```
 
-### 5. Start the frontend
+### 2. Start the Frontend
 
 Open another terminal:
 
 ```powershell
 cd frontend
-npm install
+```
+
+Start the Vite development server:
+
+```powershell
 npm run dev
 ```
 
@@ -202,66 +446,124 @@ Frontend URL:
 http://localhost:5173
 ```
 
-## Authentication and Security
+---
 
-APISentry AI includes JWT-based authentication and API key protection for sensitive security endpoints.
+## API Security
 
-Authentication endpoints:
+APISentry AI implements authentication and access protection for backend operations.
 
-| Method | Endpoint | Purpose |
-|---|---|---|
-| POST | `/api/v1/auth/login` | Obtain an authentication token |
-| GET | `/api/v1/auth/me` | Retrieve the authenticated user's profile |
-| GET | `/api/v1/auth/users/{user_id}` | Retrieve a protected user resource |
+### JWT Authentication
 
-Protected endpoints require the appropriate authentication credentials.
+JSON Web Tokens are used for token-based authentication.
 
-**Current implementation limitation:** The user registry is in-memory. User records are not persisted across backend restarts. Persistent user management is a future improvement.
+JWT authentication helps the application identify authenticated users and control access to protected functionality.
 
-The demo authentication feature is disabled by default and should only be enabled intentionally for development or demonstration.
+### API Key Protection
 
-## Running Tests
+API key validation is implemented to protect sensitive backend operations.
 
-Run the backend test suite from the project root:
+Protected requests must provide the expected API key through the appropriate request header.
+
+Example header format:
+
+```http
+x-api-key: YOUR_API_KEY
+```
+
+The actual API key must be configured locally and must not be exposed in public repositories.
+
+---
+
+## Testing
+
+The backend uses Pytest for automated testing.
+
+Run the test suite from the project root:
 
 ```powershell
-python -m pytest backend/tests -q
+.\.venv\Scripts\Activate.ps1
+$env:PYTHONPATH = (Get-Location).Path
+python -m pytest backend/tests -v
 ```
 
-The project has previously achieved:
+The backend test suite has previously completed with:
 
 ```text
-590 passed
+590 passed, 4 warnings
 ```
 
-This is a recorded test result, not a guarantee that every future code revision will pass.
+The warnings were deprecation warnings and did not indicate test failures.
 
-## Frontend Commands
+### Frontend Checks
 
-Run these commands from the `frontend` directory:
+Navigate to the frontend directory:
 
-| Command | Purpose |
-|---|---|
-| `npm run dev` | Start development server |
-| `npm run build` | Build production frontend |
-| `npm run lint` | Run frontend lint checks |
-| `npm run preview` | Preview production build |
+```powershell
+cd frontend
+```
 
-## Limitations and Future Improvements
+Run lint checks:
 
-- Persistent user registration and database-backed authentication
-- Improved production-grade identity and access management
-- Further validation against real-world API attack datasets
-- More comprehensive security event logging and alerting
-- Production deployment and monitoring
-- Additional integration and end-to-end testing
+```powershell
+npm run lint
+```
 
-## Disclaimer
+Create a production build:
 
-APISentry AI is an academic development project intended for learning, experimentation, and API security analysis. It is not a replacement for a production Web Application Firewall (WAF), API Gateway, or dedicated security monitoring platform.
+```powershell
+npm run build
+```
+
+---
+
+## Limitations
+
+The current implementation has some limitations:
+
+- Detection accuracy depends on the quality and completeness of the API traffic data supplied to the system.
+- Detection results should be treated as potential security indicators, not definitive proof of an attack.
+- Detection quality requires evaluation against representative real-world traffic.
+- JWT user registration and related user data are currently maintained in memory rather than through persistent user storage.
+- The platform is a monitoring and analysis project; it does not automatically prevent or block attacks against external production APIs.
+- Demonstration or sample traffic does not establish real-world attack detection effectiveness.
+
+---
+
+## Future Enhancements
+
+Potential improvements include:
+
+1. Persistent user management and authentication storage.
+2. Advanced anomaly detection using larger and more representative datasets.
+3. Improved detection accuracy through model evaluation and tuning.
+4. Real-time API traffic monitoring.
+5. Automated alerts for high-risk activity.
+6. Detailed security reports and export functionality.
+7. Improved dashboard visualizations.
+8. Integration with external security monitoring tools.
+9. Role-based access control.
+10. Deployment using Docker and cloud infrastructure.
+
+---
+
+## Project Status
+
+APISentry AI is an academic software project focused on API security monitoring, behavioral analysis, and threat detection.
+
+The current implementation includes a FastAPI backend, React frontend, database integration, seven detection modules, authentication mechanisms, and automated backend tests.
+
+The project demonstrates how different detection techniques can be combined into a centralized API security analysis platform.
+
+---
 
 ## Author
 
 **Prityush Pal**
 
-GitHub: [@palprityush-ops](https://github.com/palprityush-ops)
+GitHub: [@singhsanya2303-eng](https://github.com/singhsanya2303-eng)
+
+Project Repository: [APISentry AI](https://github.com/singhsanya2303-eng/APISentry-AI)
+
+---
+
+*APISentry AI - Intelligent API Security Monitoring and Threat Detection.*
