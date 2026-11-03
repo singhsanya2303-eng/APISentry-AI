@@ -1,6 +1,6 @@
 import { useMemo, useState } from "react";
 import {
-  Activity, AlertTriangle, CheckCircle2, CircleHelp, Code2, Copy,
+  Activity, AlertTriangle, CheckCircle2, CircleHelp, Code2,
   Fingerprint, Gauge, LoaderCircle, LockKeyhole, Play, RotateCcw,
   ShieldAlert, ShieldCheck, Sparkles, Network, Clock3, Braces,
 } from "lucide-react";

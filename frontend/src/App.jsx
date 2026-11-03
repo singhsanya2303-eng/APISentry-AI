@@ -1,9 +1,7 @@
-import AnalysisPanel from "./components/AnalysisPanel";
-import { useEffect, useState } from "react";
+import { lazy, Suspense, useEffect, useState } from "react";
 import {
   Activity,
   AlertTriangle,
-  ArrowDownRight,
   ArrowUpRight,
   Bell,
   CheckCircle2,
@@ -18,7 +16,6 @@ import {
   Menu,
   Network,
   RefreshCw,
-  Search,
   Shield,
   ShieldAlert,
   ShieldCheck,
@@ -36,6 +33,7 @@ import {
 } from "recharts";
 import "./App.css";
 
+const AnalysisPanel = lazy(() => import("./components/AnalysisPanel"));
 const API_BASE = import.meta.env.VITE_API_BASE_URL || "http://127.0.0.1:8000";
 const API_KEY = import.meta.env.VITE_APISENTRY_API_KEY || "";
 
@@ -91,7 +89,11 @@ function App() {
   }
 
   useEffect(() => {
-    checkHealth();
+    const timeoutId = window.setTimeout(() => {
+      checkHealth();
+    }, 0);
+
+    return () => window.clearTimeout(timeoutId);
   }, []);
 
   const trafficResult = analysisResults["Traffic Trend"];
@@ -454,17 +456,19 @@ function App() {
               <p className="detail-note">The exact HTTP method and required query parameters should be verified in each route definition before running an analysis.</p>
             </section>
                     ) : (
-            <AnalysisPanel
-  key={activeModule}
-  moduleName={activeModule}
-  onResult={(name, data) =>
-    setAnalysisResults((previous) => ({
-      ...previous,
-      [name]: data,
-    }))
-  }
-/>
-          )}
+                      <Suspense fallback={<div className="panel">Loading analysis module…</div>}>
+                        <AnalysisPanel
+                          key={activeModule}
+                          moduleName={activeModule}
+                          onResult={(name, data) =>
+                            setAnalysisResults((previous) => ({
+                              ...previous,
+                              [name]: data,
+                            }))
+                          }
+                        />
+                      </Suspense>
+                    )}
 
 
           <footer className="app-footer">
