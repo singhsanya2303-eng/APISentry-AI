@@ -5,13 +5,16 @@ SECURITY CONTRACT:
   - STRICTLY FOR LOCAL DEMO / DEVELOPMENT TESTING.
   - Never enabled in production environments.
   - Returns HTTP 401 Unauthorized for deliberately invalid credentials.
-  - Returns HTTP 200 OK for valid demo credentials ("demo_user" / "demo_password123").
+  - Returns HTTP 200 OK for valid explicitly configured demo credentials.
   - Never logs or stores submitted passwords.
   - Handled by RequestLoggingMiddleware for traffic logging and persistence.
 """
 
 from fastapi import APIRouter, HTTPException, status
 from pydantic import BaseModel, Field
+
+from app.core.config import settings
+from app.core.security import authenticate_user
 
 router = APIRouter(tags=["Demo / Development Only"])
 
@@ -42,11 +45,10 @@ class DemoLoginResponse(BaseModel):
 )
 def demo_login(credentials: DemoLoginRequest):
     """
-    Handle demo authentication attempts.
-    Deliberately validates against hardcoded demo test credentials.
+    Handle demo authentication attempts using explicitly configured credentials.
     """
-    # Hardcoded local demo credentials
-    if credentials.username == "demo_user" and credentials.password == "demo_password123":
+    user = authenticate_user(credentials.username, credentials.password)
+    if user and user["username"] == settings.DEMO_USERNAME.strip().lower():
         return DemoLoginResponse(
             message="Demo authentication successful",
             authenticated=True,

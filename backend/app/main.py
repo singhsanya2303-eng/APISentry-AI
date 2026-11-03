@@ -6,6 +6,7 @@ from fastapi.middleware.cors import CORSMiddleware
 
 from app.api.v1.router import api_router
 from app.core.config import settings
+from app.core.security import seed_demo_user
 from app.db.init_db import init_db
 from app.utils.middleware import RequestLoggingMiddleware
 
@@ -61,6 +62,7 @@ def create_app(cors_origins=None):
 
     # Conditionally mount local demo authentication endpoint (development only)
     if settings.is_demo_auth_enabled:
+        seed_demo_user()
         from app.api.v1.routes.demo_auth import router as demo_auth_router
 
         app.include_router(

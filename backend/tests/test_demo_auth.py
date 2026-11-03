@@ -22,6 +22,13 @@ from app.detection.bruteforce_detector import (
 )
 
 
+@pytest.fixture(autouse=True)
+def configure_demo_credentials(monkeypatch):
+    monkeypatch.setattr(settings, "DEMO_USERNAME", "demo_user")
+    monkeypatch.setattr(settings, "DEMO_PASSWORD", "demo_password123")
+
+
+
 def test_demo_auth_disabled_by_default(monkeypatch):
     """When APISENTRY_ENABLE_DEMO_AUTH is False, the endpoint is not registered (404)."""
     monkeypatch.setattr(settings, "APISENTRY_ENABLE_DEMO_AUTH", False)

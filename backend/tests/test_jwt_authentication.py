@@ -44,13 +44,13 @@ def test_password_hashing_and_verification():
 
 
 def test_registered_users_authentication():
-    """Verify seeded and registered users authenticate correctly."""
-    # Alice is seeded by default
+    """Verify explicitly registered users authenticate correctly."""
+    register_user("alice", "AlicePassword123!", actor_id="user_alice")
     user = authenticate_user("alice", "AlicePassword123!")
     assert user is not None
     assert user["actor_id"] == "user_alice"
 
-    # Bob is seeded by default
+    register_user("bob", "BobPassword123!", actor_id="user_bob")
     user_bob = authenticate_user("bob", "BobPassword123!")
     assert user_bob is not None
     assert user_bob["actor_id"] == "user_bob"
@@ -134,6 +134,7 @@ def test_decode_rejects_none_algorithm():
 
 def test_login_endpoint_success():
     """Verify POST /api/v1/auth/login returns valid JWT access token."""
+    register_user("alice", "AlicePassword123!", actor_id="user_alice")
     response = client.post(
         "/api/v1/auth/login",
         json={"username": "alice", "password": "AlicePassword123!"},
@@ -148,6 +149,7 @@ def test_login_endpoint_success():
 
 def test_login_endpoint_invalid_credentials_returns_401():
     """Verify POST /api/v1/auth/login rejects wrong credentials with HTTP 401."""
+    register_user("alice", "AlicePassword123!", actor_id="user_alice")
     response = client.post(
         "/api/v1/auth/login",
         json={"username": "alice", "password": "WrongPassword!"},

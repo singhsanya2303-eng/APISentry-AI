@@ -140,26 +140,19 @@ def authenticate_user(username: str, password: str) -> Optional[Dict[str, Any]]:
     return user
 
 
-# Seed initial baseline end-users (compatible with demo auth and standard testing)
-register_user(
-    username="alice",
-    password="AlicePassword123!",
-    actor_id="user_alice",
-    role="user",
-)
-register_user(
-    username="bob",
-    password="BobPassword123!",
-    actor_id="user_bob",
-    role="user",
-)
-register_user(
-    username="demo_user",
-    password="demo_password123",
-    actor_id="user_demo",
-    role="user",
-)
-
+def seed_demo_user() -> None:
+    """Register the explicitly configured local demo user when demo mode is enabled."""
+    if not settings.is_demo_auth_enabled:
+        return
+    demo_password = settings.DEMO_PASSWORD
+    if not demo_password:
+        return
+    register_user(
+        username=settings.DEMO_USERNAME,
+        password=demo_password,
+        actor_id=f"actor_{settings.DEMO_USERNAME.strip().lower()}",
+        role="user",
+    )
 
 # ---------------------------------------------------------------------------
 # RFC 7519 JSON Web Token (JWT) Engine — HS256 Standard Implementation
