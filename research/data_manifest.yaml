@@ -1,0 +1,39 @@
+schema_version: "1.0"
+preprocessing_version: "1.0"
+datasets:
+  - name: csic_2010
+    source_url: "http://www.isi.csic.es/dataset/"
+    version: "not-acquired"
+    license_status: "license not verified; confirm before redistribution"
+    collection_date: null
+    sha256: null
+    label_definitions:
+      normal: "Valid request"
+      attack: "Attack request"
+  - name: http_params_dataset
+    source_url: "https://github.com/Morzeux/HttpParamsDataset"
+    version: "not-acquired"
+    license_status: "MIT; preserve license notice"
+    collection_date: null
+    sha256: null
+    label_definitions:
+      normal: "norm"
+      attack: "anom"
+  - name: cic_ids2017
+    source_url: "https://www.unb.ca/cic/datasets/ids-2017.html"
+    version: "not-acquired"
+    license_status: "citation required; redistribution terms require confirmation"
+    collection_date: null
+    sha256: null
+    label_definitions:
+      normal: "BENIGN"
+      attack: "dataset attack-family labels"
+  - name: custom_crapi
+    source_url: "https://github.com/OWASP/crAPI"
+    version: "not-acquired"
+    license_status: "Apache-2.0 for crAPI project artifacts; review generated-data dependencies"
+    collection_date: null
+    sha256: null
+    label_definitions:
+      normal: "controlled normal workflow"
+      attack: "controlled attack workflow with category"

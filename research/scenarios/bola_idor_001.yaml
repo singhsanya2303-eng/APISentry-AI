@@ -1,0 +1,155 @@
+scenario_id: bola_idor_001
+scenario_version: "1.0"
+campaign_id: bola_attack_001
+source_dataset: custom_crapi
+target_origin: http://127.0.0.1:8888
+crapi_commit: b5fc307f3e5f875809b095b771108ef342a33724
+capture_tool: apisentry-controlled-runner
+capture_tool_version: "6A"
+controlled_accounts:
+  - account_id: bola_attacker
+    principal_id: bola_attacker
+    role: user
+  - account_id: bola_victim
+    principal_id: bola_victim
+    role: user
+resource_ownership:
+  - resource_id: "${victim_vehicle_id}"
+    owner_account_id: bola_victim
+    resource_type: vehicle
+setup_actions:
+  - action_id: bola_register_attacker
+    campaign_id: bola_attack_001
+    principal_id: bola_attacker
+    session_id: bola_setup_attacker
+    label: normal
+    phase: setup
+    expected_outcome: attacker account is created through the documented signup operation
+    execution:
+      method: POST
+      path: /identity/api/auth/signup
+      authentication: none
+      body_fields: [email, name, number, password]
+      credential_source: runtime_generated
+      openapi_operation: signup
+      response_semantics: registration result requires procedure verification
+    mapping_policy:
+      retained_kinds: [primary]
+      api_path_prefixes: [/identity/api/]
+  - action_id: bola_register_victim
+    campaign_id: bola_attack_001
+    principal_id: bola_victim
+    session_id: bola_setup_victim
+    label: normal
+    phase: setup
+    expected_outcome: victim account is created through the documented signup operation
+    execution:
+      method: POST
+      path: /identity/api/auth/signup
+      authentication: none
+      body_fields: [email, name, number, password]
+      credential_source: runtime_generated
+      openapi_operation: signup
+      response_semantics: registration result requires procedure verification
+    mapping_policy:
+      retained_kinds: [primary]
+      api_path_prefixes: [/identity/api/]
+  - action_id: bola_login_attacker
+    campaign_id: bola_attack_001
+    principal_id: bola_attacker
+    session_id: bola_attacker_session
+    label: normal
+    phase: setup
+    expected_outcome: attacker login returns a runtime JWT
+    execution:
+      method: POST
+      path: /identity/api/auth/login
+      authentication: none
+      body_fields: [email, password]
+      credential_source: runtime_generated
+      openapi_operation: login
+      response_semantics: JWT is retained only in memory
+    mapping_policy:
+      retained_kinds: [primary]
+      api_path_prefixes: [/identity/api/]
+  - action_id: bola_login_victim
+    campaign_id: bola_attack_001
+    principal_id: bola_victim
+    session_id: bola_victim_session
+    label: normal
+    phase: setup
+    expected_outcome: victim login returns a runtime JWT
+    execution:
+      method: POST
+      path: /identity/api/auth/login
+      authentication: none
+      body_fields: [email, password]
+      credential_source: runtime_generated
+      openapi_operation: login
+      response_semantics: JWT is retained only in memory
+    mapping_policy:
+      retained_kinds: [primary]
+      api_path_prefixes: [/identity/api/]
+  - action_id: bola_establish_victim_resource
+    campaign_id: bola_attack_001
+    principal_id: bola_victim
+    session_id: bola_victim_session
+    label: normal
+    phase: setup
+    expected_outcome: victim-owned vehicle is identified and ownership is independently recorded
+    execution:
+      method: GET
+      path: /identity/api/v2/vehicle/vehicles
+      authentication: bearer_jwt
+      openapi_operation: get_vehicles
+      response_semantics: OpenAPI does not define ownership fields; runtime verifier must establish owner and resource identity
+      output: victim_vehicle_id
+    mapping_policy:
+      retained_kinds: [primary]
+      api_path_prefixes: [/identity/api/]
+actions:
+  - action_id: bola_cross_account_vehicle_location
+    campaign_id: bola_attack_001
+    principal_id: bola_attacker
+    session_id: bola_attacker_session
+    label: attack
+    attack_category: bola_idor
+    expected_outcome: attacker request for victim-owned resource is denied by verified response semantics
+    execution:
+      method: GET
+      path: /identity/api/v2/vehicle/${victim_vehicle_id}/location
+      authentication: bearer_jwt
+      openapi_operation: get_location
+      response_semantics: OpenAPI lists 200 and 404 only; ownership and authorization semantics are unresolved and require in-memory verification
+      verification:
+        expected_resource_owner: bola_victim
+        requesting_principal: bola_attacker
+        method: in_memory_response_semantics
+        status_only_insufficient: true
+    mapping_policy:
+      retained_kinds: [primary]
+      api_path_prefixes: [/identity/api/]
+cleanup_actions:
+  - action_id: bola_cleanup
+    campaign_id: bola_attack_001
+    principal_id: bola_attacker
+    session_id: bola_cleanup
+    label: normal
+    phase: cleanup
+    expected_outcome: both runtime-generated accounts and resources are removed by controlled environment cleanup
+    execution:
+      method: NONE
+      path: null
+      authentication: operator
+      operation: controlled_environment_cleanup
+      response_semantics: no HTTP endpoint is claimed
+    mapping_policy:
+      retained_kinds: []
+success_conditions:
+  - victim resource ownership is independently verified before the attack action
+  - attacker and victim are distinct controlled accounts
+  - actual access outcome is verified from response semantics, not status alone
+failure_conditions:
+  - ownership cannot be established
+  - actual access outcome is unknown
+  - target or redirect leaves the approved origin

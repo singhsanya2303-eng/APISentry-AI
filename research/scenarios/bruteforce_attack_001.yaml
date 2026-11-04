@@ -1,0 +1,76 @@
+scenario_id: bruteforce_attack_001
+scenario_version: "1.0"
+campaign_id: bruteforce_attack_001
+source_dataset: custom_crapi
+target_origin: http://127.0.0.1:8888
+crapi_commit: b5fc307f3e5f875809b095b771108ef342a33724
+capture_tool: apisentry-controlled-runner
+capture_tool_version: "6A"
+controlled_accounts:
+  - account_id: brute_force_target
+    principal_id: brute_force_target
+    role: user
+resource_ownership: []
+setup_actions:
+  - action_id: brute_force_register
+    campaign_id: bruteforce_attack_001
+    principal_id: brute_force_target
+    session_id: brute_force_setup
+    label: normal
+    phase: setup
+    expected_outcome: controlled account exists for the login experiment
+    execution:
+      method: POST
+      path: /identity/api/auth/signup
+      authentication: none
+      body_fields: [email, name, number, password]
+      credential_source: runtime_generated
+      openapi_operation: signup
+      response_semantics: registration result requires procedure verification
+    mapping_policy:
+      retained_kinds: [primary]
+      api_path_prefixes: [/identity/api/]
+actions:
+  - action_id: brute_force_failed_logins
+    campaign_id: bruteforce_attack_001
+    principal_id: brute_force_target
+    session_id: brute_force_session
+    label: attack
+    attack_category: brute_force
+    expected_outcome: bounded invalid-login sequence does not authenticate
+    execution:
+      method: POST
+      path: /identity/api/auth/login
+      authentication: none
+      body_fields: [email, password]
+      credential_source: runtime_email_with_invalid_runtime_password
+      openapi_operation: login
+      response_semantics: OpenAPI lists 200 and 500; authentication failure must be verified without persisting credentials
+      request_count: 5
+      delay_ms: 100
+    mapping_policy:
+      retained_kinds: [primary]
+      api_path_prefixes: [/identity/api/]
+cleanup_actions:
+  - action_id: brute_force_cleanup
+    campaign_id: bruteforce_attack_001
+    principal_id: brute_force_target
+    session_id: brute_force_cleanup
+    label: normal
+    phase: cleanup
+    expected_outcome: runtime-generated account is removed by controlled environment cleanup
+    execution:
+      method: NONE
+      path: null
+      authentication: operator
+      operation: controlled_environment_cleanup
+      response_semantics: no HTTP endpoint is claimed
+    mapping_policy:
+      retained_kinds: []
+success_conditions:
+  - exactly five bounded login attempts are issued
+  - no attempt authenticates
+failure_conditions:
+  - request count exceeds five
+  - delay is shorter than 100 milliseconds
+  - credentials cross the persistence boundary

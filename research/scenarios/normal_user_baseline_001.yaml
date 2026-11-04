@@ -1,0 +1,137 @@
+scenario_id: normal_user_baseline_001
+scenario_version: "1.0"
+campaign_id: normal_baseline_001
+source_dataset: custom_crapi
+target_origin: http://127.0.0.1:8888
+crapi_commit: b5fc307f3e5f875809b095b771108ef342a33724
+capture_tool: apisentry-controlled-runner
+capture_tool_version: "6A"
+controlled_accounts:
+  - account_id: baseline_user
+    principal_id: baseline_user
+    role: user
+resource_ownership: []
+setup_actions:
+  - action_id: baseline_register
+    campaign_id: normal_baseline_001
+    principal_id: baseline_user
+    session_id: baseline_setup
+    label: normal
+    phase: setup
+    expected_outcome: account registration follows the documented signup response
+    execution:
+      method: POST
+      path: /identity/api/auth/signup
+      authentication: none
+      body_fields: [email, name, number, password]
+      credential_source: runtime_generated
+      openapi_operation: signup
+      response_semantics: OpenAPI lists 200, 403, and 500; success requires procedure verification
+    mapping_policy:
+      retained_kinds: [primary]
+      api_path_prefixes: [/identity/api/]
+  - action_id: baseline_login
+    campaign_id: normal_baseline_001
+    principal_id: baseline_user
+    session_id: baseline_session
+    label: normal
+    phase: setup
+    expected_outcome: login returns a runtime JWT for the controlled account
+    execution:
+      method: POST
+      path: /identity/api/auth/login
+      authentication: none
+      body_fields: [email, password]
+      credential_source: runtime_generated
+      openapi_operation: login
+      response_semantics: OpenAPI lists 200 and 500; JWT extraction is in-memory only
+    mapping_policy:
+      retained_kinds: [primary]
+      api_path_prefixes: [/identity/api/]
+actions:
+  - action_id: baseline_dashboard
+    campaign_id: normal_baseline_001
+    principal_id: baseline_user
+    session_id: baseline_session
+    label: normal
+    expected_outcome: authenticated dashboard request returns the documented 200 response
+    execution:
+      method: GET
+      path: /identity/api/v2/user/dashboard
+      authentication: bearer_jwt
+      openapi_operation: get_dashboard
+      response_semantics: OpenAPI lists 200 and 404; status alone is not semantic proof
+    mapping_policy:
+      retained_kinds: [primary]
+      api_path_prefixes: [/identity/api/]
+  - action_id: baseline_vehicles
+    campaign_id: normal_baseline_001
+    principal_id: baseline_user
+    session_id: baseline_session
+    label: normal
+    expected_outcome: authenticated vehicle listing returns the documented 200 response
+    execution:
+      method: GET
+      path: /identity/api/v2/vehicle/vehicles
+      authentication: bearer_jwt
+      openapi_operation: get_vehicles
+      response_semantics: OpenAPI lists 200 and 500; ownership semantics unresolved
+    mapping_policy:
+      retained_kinds: [primary]
+      api_path_prefixes: [/identity/api/]
+  - action_id: baseline_recent_posts
+    campaign_id: normal_baseline_001
+    principal_id: baseline_user
+    session_id: baseline_session
+    label: normal
+    expected_outcome: recent posts request returns the documented 200 response
+    execution:
+      method: GET
+      path: /community/api/v2/community/posts/recent
+      authentication: bearer_jwt
+      query_parameters:
+        limit: 10
+        offset: 0
+      openapi_operation: get_recent_posts
+      response_semantics: OpenAPI lists 200
+    mapping_policy:
+      retained_kinds: [primary]
+      api_path_prefixes: [/community/api/]
+  - action_id: baseline_products
+    campaign_id: normal_baseline_001
+    principal_id: baseline_user
+    session_id: baseline_session
+    label: normal
+    expected_outcome: product listing returns the documented 200 response
+    execution:
+      method: GET
+      path: /workshop/api/shop/products
+      authentication: bearer_jwt
+      openapi_operation: get_products
+      response_semantics: OpenAPI lists 200
+    mapping_policy:
+      retained_kinds: [primary]
+      api_path_prefixes: [/workshop/api/]
+cleanup_actions:
+  - action_id: baseline_cleanup
+    campaign_id: normal_baseline_001
+    principal_id: baseline_user
+    session_id: baseline_cleanup
+    label: normal
+    phase: cleanup
+    expected_outcome: runtime-generated account and session are removed by the controlled environment procedure
+    execution:
+      method: NONE
+      path: null
+      authentication: operator
+      operation: controlled_environment_cleanup
+      response_semantics: no HTTP endpoint is claimed; cleanup result is procedural
+    mapping_policy:
+      retained_kinds: []
+success_conditions:
+  - every retained request maps to one declared action
+  - setup and baseline responses satisfy their documented procedure checks
+failure_conditions:
+  - target validation fails
+  - any request leaves the approved origin
+  - credentials or raw bodies cross the persistence boundary

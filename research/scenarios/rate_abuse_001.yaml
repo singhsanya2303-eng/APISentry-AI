@@ -1,0 +1,91 @@
+scenario_id: rate_abuse_001
+scenario_version: "1.0"
+campaign_id: rate_abuse_001
+source_dataset: custom_crapi
+target_origin: http://127.0.0.1:8888
+crapi_commit: b5fc307f3e5f875809b095b771108ef342a33724
+capture_tool: apisentry-controlled-runner
+capture_tool_version: "6A"
+controlled_accounts:
+  - account_id: rate_test_user
+    principal_id: rate_test_user
+    role: user
+resource_ownership: []
+setup_actions:
+  - action_id: rate_register
+    campaign_id: rate_abuse_001
+    principal_id: rate_test_user
+    session_id: rate_setup
+    label: normal
+    phase: setup
+    expected_outcome: controlled account is created
+    execution:
+      method: POST
+      path: /identity/api/auth/signup
+      authentication: none
+      body_fields: [email, name, number, password]
+      credential_source: runtime_generated
+      openapi_operation: signup
+      response_semantics: registration result requires procedure verification
+    mapping_policy:
+      retained_kinds: [primary]
+      api_path_prefixes: [/identity/api/]
+  - action_id: rate_login
+    campaign_id: rate_abuse_001
+    principal_id: rate_test_user
+    session_id: rate_session
+    label: normal
+    phase: setup
+    expected_outcome: login returns a runtime JWT
+    execution:
+      method: POST
+      path: /identity/api/auth/login
+      authentication: none
+      body_fields: [email, password]
+      credential_source: runtime_generated
+      openapi_operation: login
+      response_semantics: JWT is retained only in memory
+    mapping_policy:
+      retained_kinds: [primary]
+      api_path_prefixes: [/identity/api/]
+actions:
+  - action_id: rate_bounded_dashboard_requests
+    campaign_id: rate_abuse_001
+    principal_id: rate_test_user
+    session_id: rate_session
+    label: attack
+    attack_category: rate_abuse
+    expected_outcome: bounded rapid request sequence completes with observable server outcomes
+    execution:
+      method: GET
+      path: /identity/api/v2/user/dashboard
+      authentication: bearer_jwt
+      openapi_operation: get_dashboard
+      response_semantics: OpenAPI lists 200 and 404; rate behavior must be measured, not inferred from one status
+      request_count: 10
+      delay_ms: 100
+    mapping_policy:
+      retained_kinds: [primary]
+      api_path_prefixes: [/identity/api/]
+cleanup_actions:
+  - action_id: rate_cleanup
+    campaign_id: rate_abuse_001
+    principal_id: rate_test_user
+    session_id: rate_cleanup
+    label: normal
+    phase: cleanup
+    expected_outcome: runtime-generated account is removed by controlled environment cleanup
+    execution:
+      method: NONE
+      path: null
+      authentication: operator
+      operation: controlled_environment_cleanup
+      response_semantics: no HTTP endpoint is claimed
+    mapping_policy:
+      retained_kinds: []
+success_conditions:
+  - exactly ten requests are issued with at least 100 milliseconds between requests
+  - rate behavior is reported as observations, not vulnerability confirmation
+failure_conditions:
+  - request count exceeds ten
+  - delay is shorter than 100 milliseconds

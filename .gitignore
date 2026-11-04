@@ -53,3 +53,9 @@ __pycache__/
 
 # Temporary scratch files
 backend/scratch/
+
+# Research collection outputs and secrets
+.research-local/
+research/captures/
+research/datasets/generated/
+research/secrets/

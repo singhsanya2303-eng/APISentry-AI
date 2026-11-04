@@ -8,6 +8,10 @@ The system combines behavioral analysis, rule-based detection, anomaly detection
 
 It consists of a **FastAPI backend**, a **React frontend**, and a database layer using **SQLAlchemy and PostgreSQL**.
 
+Research dataset and controlled-collection documentation is maintained in
+[research/README.md](research/README.md), with the current Stage 7 handoff in
+[research/STAGE_7_HANDOFF.md](research/STAGE_7_HANDOFF.md).
+
 ---
 
 ## Table of Contents
