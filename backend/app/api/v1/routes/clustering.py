@@ -1,10 +1,11 @@
 
 """API endpoint for comparing clustering-based anomaly detectors."""
 
+import logging
 from typing import Any, Dict, List
 
 import numpy as np
-from fastapi import APIRouter, HTTPException
+from fastapi import APIRouter, HTTPException, status
 from pydantic import BaseModel, Field
 
 from app.services.clustering_comparison_service import (
@@ -15,6 +16,7 @@ router = APIRouter(
     prefix="/security/clustering",
     tags=["Clustering Anomaly Analysis"],
 )
+logger = logging.getLogger("apisentry.api.clustering")
 
 
 class ClusteringAnalysisRequest(BaseModel):
@@ -55,5 +57,13 @@ def analyze_clustering(
             contamination=request.contamination,
             random_state=request.random_state,
         )
+    except HTTPException:
+        raise
     except ValueError as exc:
         raise HTTPException(status_code=422, detail=str(exc)) from exc
+    except Exception as exc:
+        logger.exception("Clustering analysis failed")
+        raise HTTPException(
+            status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
+            detail="Clustering analysis could not be completed.",
+        ) from exc

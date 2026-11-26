@@ -2,9 +2,10 @@
 """API endpoint for baseline-based traffic trend anomaly analysis."""
 
 from datetime import datetime
+import logging
 from typing import Any, Dict, List
 
-from fastapi import APIRouter, Depends, HTTPException, Query
+from fastapi import APIRouter, Depends, HTTPException, Query, status
 from sqlalchemy.orm import Session
 
 from app.db.session import get_db
@@ -15,6 +16,7 @@ router = APIRouter(
     prefix="/security/traffic-trends",
     tags=["Traffic Trend Anomaly Analysis"],
 )
+logger = logging.getLogger("apisentry.api.traffic_trends")
 
 PAGE_SIZE = 500
 MAX_LOGS_PER_WINDOW = 10000
@@ -82,14 +84,22 @@ def analyze_traffic_trend_endpoint(
             ),
         )
 
-    baseline_logs = _fetch_window_logs(baseline_start, baseline_end, db)
-    target_logs = _fetch_window_logs(target_start, target_end, db)
-
     try:
+        baseline_logs = _fetch_window_logs(baseline_start, baseline_end, db)
+        target_logs = _fetch_window_logs(target_start, target_end, db)
+
         return analyze_traffic_trends(
             baseline_logs=baseline_logs,
             target_logs=target_logs,
             threshold_percentile=threshold_percentile,
         )
+    except HTTPException:
+        raise
     except ValueError as exc:
         raise HTTPException(status_code=422, detail=str(exc)) from exc
+    except Exception as exc:
+        logger.exception("Traffic trend analysis failed")
+        raise HTTPException(
+            status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
+            detail="Traffic trend analysis could not be completed.",
+        ) from exc

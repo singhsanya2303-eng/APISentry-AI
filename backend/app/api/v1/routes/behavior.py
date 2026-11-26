@@ -8,6 +8,7 @@ Endpoint:
 """
 
 from datetime import datetime
+import logging
 from typing import Optional
 from fastapi import APIRouter, Depends, Query, HTTPException, status
 from sqlalchemy.orm import Session
@@ -18,6 +19,7 @@ from app.detection.risk_scorer import RiskScoringConfig
 from app.services.behavior_analysis_service import analyze_traffic_for_behavior_risk
 
 router = APIRouter(prefix="/security/behavior", tags=["Behavioral Risk Analysis"])
+logger = logging.getLogger("apisentry.api.behavior")
 
 
 @router.get("/analyze", response_model=BehaviorRiskAnalysisResponse)
@@ -96,7 +98,8 @@ def analyze_behavior_traffic(
     except HTTPException:
         raise
     except Exception as exc:
+        logger.exception("Behavioral risk analysis failed")
         raise HTTPException(
             status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
-            detail=f"Database query failure during behavioral risk analysis: {exc}"
+            detail="Behavioral risk analysis could not be completed.",
         ) from exc

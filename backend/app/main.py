@@ -1,21 +1,74 @@
 
 from contextlib import asynccontextmanager
+import logging
 
-from fastapi import FastAPI
+from fastapi import FastAPI, Request
+from fastapi.exceptions import RequestValidationError
 from fastapi.middleware.cors import CORSMiddleware
+from fastapi.responses import JSONResponse
+from starlette.exceptions import HTTPException as StarletteHTTPException
 
-from app.api.v1.router import api_router
+from app.api.v1.router import build_api_router
 from app.core.config import settings
+from app.core.operational_logging import log_operation
 from app.core.security import seed_demo_user
 from app.db.init_db import init_db
-from app.utils.middleware import RequestLoggingMiddleware
+from app.utils.middleware import (
+    RequestLoggingMiddleware,
+    RequestSizeLimitMiddleware,
+    SecurityHeadersMiddleware,
+)
+
+
+logger = logging.getLogger("apisentry.operations")
+
+
+def _auto_create_schema_enabled() -> bool:
+    """Return whether startup may create schema objects (never in production)."""
+    return (
+        bool(settings.AUTO_CREATE_SCHEMA)
+        and str(settings.ENVIRONMENT).strip().lower() != "production"
+    )
+
+
+def _request_enforcement_registered(application: FastAPI) -> bool:
+    """Report whether request-time enforcement middleware is registered."""
+    return any(
+        getattr(getattr(item, "cls", None), "__name__", "") == "RequestEnforcementMiddleware"
+        for item in application.user_middleware
+    )
+
+
+def _enforcement_status(application: FastAPI) -> dict[str, object]:
+    registered = _request_enforcement_registered(application)
+    return {
+        "mode": "request_enforcement" if registered else "advisory_only",
+        "production_middleware_registered": registered,
+        "isolated_demo_available": True,
+    }
 
 
 def create_app(cors_origins=None):
     @asynccontextmanager
-    async def lifespan(app: FastAPI):
-        init_db()
-        yield
+    async def lifespan(application: FastAPI):
+        log_operation(
+            logger,
+            "app.startup",
+            **settings.deployment_summary(),
+            auto_create_schema_enabled=_auto_create_schema_enabled(),
+            request_enforcement_middleware_registered=_request_enforcement_registered(application),
+        )
+        try:
+            if _auto_create_schema_enabled():
+                init_db()
+            yield
+        finally:
+            log_operation(
+                logger,
+                "app.shutdown",
+                environment=settings.ENVIRONMENT,
+                request_enforcement_middleware_registered=_request_enforcement_registered(application),
+            )
 
     app = FastAPI(
         title=settings.PROJECT_NAME,
@@ -27,11 +80,15 @@ def create_app(cors_origins=None):
     )
 
     # Use supplied origins for tests; otherwise use application settings.
-    origins = (
+    origins = list(
         settings.CORS_ORIGINS
         if cors_origins is None
         else cors_origins
     )
+    if str(settings.ENVIRONMENT).strip().lower() != "production":
+        for origin in ("http://127.0.0.1:5174", "http://localhost:5174"):
+            if origin not in origins:
+                origins.append(origin)
 
     app.add_middleware(
         CORSMiddleware,
@@ -54,9 +111,11 @@ def create_app(cors_origins=None):
     )
 
     app.add_middleware(RequestLoggingMiddleware)
+    app.add_middleware(SecurityHeadersMiddleware)
+    app.add_middleware(RequestSizeLimitMiddleware, max_body_bytes=settings.MAX_REQUEST_BODY_BYTES)
 
     app.include_router(
-        api_router,
+        build_api_router(),
         prefix=settings.API_V1_STR,
     )
 
@@ -72,11 +131,44 @@ def create_app(cors_origins=None):
 
     @app.get("/health", tags=["Health"])
     def health_check():
-        """Health check endpoint returning service status."""
+        """Liveness endpoint returning service status and enforcement mode."""
         return {
             "status": "healthy",
             "service": settings.PROJECT_NAME,
+            "environment": settings.ENVIRONMENT,
+            "enforcement": _enforcement_status(app),
         }
+
+    @app.get("/ready", tags=["Health"])
+    def readiness_check():
+        """Readiness endpoint with minimal dependency checks (no secrets)."""
+        checks = {"database": "unknown"}
+        try:
+            from sqlalchemy import text
+            from app.db.session import SessionLocal
+
+            db = SessionLocal()
+            try:
+                db.execute(text("SELECT 1"))
+                checks["database"] = "ok"
+            finally:
+                db.close()
+        except Exception:
+            checks["database"] = "unavailable"
+
+        ready = all(v == "ok" for v in checks.values())
+        payload = {
+            "status": "ready" if ready else "not_ready",
+            "service": settings.PROJECT_NAME,
+            "environment": settings.ENVIRONMENT,
+            "enforcement": _enforcement_status(app),
+            "checks": checks,
+        }
+        if not ready:
+            log_operation(logger, "app.readiness_failed", environment=settings.ENVIRONMENT, checks=checks)
+            from fastapi.responses import JSONResponse
+            return JSONResponse(status_code=503, content=payload)
+        return payload
 
     @app.get("/", tags=["Root"])
     def root():
@@ -87,6 +179,49 @@ def create_app(cors_origins=None):
             "docs": "/docs",
             "health": "/health",
         }
+
+    @app.exception_handler(RequestValidationError)
+    async def validation_exception_handler(request: Request, exc: RequestValidationError):
+        from fastapi.encoders import jsonable_encoder
+        from app.core.security_events import redact_sensitive
+
+        def _loc_has_sensitive(loc) -> bool:
+            if not isinstance(loc, (list, tuple)):
+                return False
+            sensitive_markers = ("password", "token", "secret", "api_key", "authorization", "credential")
+            for part in loc:
+                p = str(part).lower()
+                if any(m in p for m in sensitive_markers):
+                    return True
+            return False
+
+        errors = []
+        for err in exc.errors():
+            cleaned = dict(err)
+            loc = cleaned.get("loc")
+            if "input" in cleaned:
+                if _loc_has_sensitive(loc):
+                    cleaned["input"] = "***REDACTED***"
+                else:
+                    cleaned["input"] = redact_sensitive(cleaned["input"])
+            ctx = cleaned.get("ctx")
+            if isinstance(ctx, dict):
+                cleaned["ctx"] = redact_sensitive(ctx)
+            errors.append(jsonable_encoder(cleaned))
+        return JSONResponse(status_code=422, content={"detail": errors})
+
+    @app.exception_handler(Exception)
+    async def unhandled_exception_handler(request: Request, exc: Exception):
+        # Never leak internals; log a structured, redacted server-side record.
+        log_operation(
+            logger,
+            "app.unhandled_error",
+            path=request.url.path,
+            method=request.method,
+            error_type=type(exc).__name__,
+            request_id=getattr(request.state, "request_id", None),
+        )
+        return JSONResponse(status_code=500, content={"detail": "Internal server error"})
 
     return app
 

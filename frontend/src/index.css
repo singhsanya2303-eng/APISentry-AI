@@ -1,10 +1,114 @@
 
 @import url('https://fonts.googleapis.com/css2?family=DM+Sans:wght@400;500;600;700&family=Space+Grotesk:wght@400;500;600;700&display=swap');
 
+/* APISentry semantic design tokens.
+   Light is the base palette; dark overrides only the colour tokens so that
+   layout, spacing, radius and typography stay identical between themes. */
+:root,
+[data-theme="light"] {
+  color-scheme: light;
+
+  --page-bg: #f3f6fa;
+  --sidebar-bg: #ffffff;
+  --topbar-bg: #ffffff;
+  --surface: #ffffff;
+  --surface-elevated: #ffffff;
+  --surface-muted: #eef2f7;
+  --text-primary: #17223a;
+  --text-secondary: #3c4c66;
+  --text-muted: #5f7089;
+  --border: #d6dfea;
+  --border-strong: #bcc9da;
+  --accent: #1d5fd0;
+  --accent-hover: #164ba8;
+  --accent-contrast: #ffffff;
+  --success: #147a5a;
+  --warning: #9a6300;
+  --danger: #b32636;
+  --info: #1d5fd0;
+  --focus-ring: #2f74e0;
+  --purple: #6b4fd1;
+  --purple-rgb: 107, 79, 209;
+
+  --accent-rgb: 29, 95, 208;
+  --success-rgb: 20, 122, 90;
+  --warning-rgb: 154, 99, 0;
+  --danger-rgb: 179, 38, 54;
+  --info-rgb: 29, 95, 208;
+
+  --shadow-sm: 0 1px 2px rgba(23, 34, 58, 0.07);
+  --shadow-md: 0 10px 28px rgba(23, 34, 58, 0.10);
+  --radius-sm: 6px;
+  --radius-md: 9px;
+  --radius-lg: 13px;
+  --space-1: 4px;
+  --space-2: 8px;
+  --space-3: 12px;
+  --space-4: 16px;
+  --space-5: 24px;
+  --space-6: 32px;
+  --font-sans: 'DM Sans', system-ui, -apple-system, sans-serif;
+  --font-display: 'Space Grotesk', 'DM Sans', system-ui, sans-serif;
+  --font-mono: ui-monospace, SFMono-Regular, Consolas, monospace;
+  --font-size-xs: 10px;
+  --font-size-sm: 11px;
+  --font-size-md: 12px;
+  --font-size-lg: 14px;
+  --transition-fast: 160ms ease;
+  --transition-normal: 220ms ease;
+
+  /* Legacy aliases keep existing styles on one source of truth. */
+  --bg: var(--page-bg);
+  --sidebar: var(--sidebar-bg);
+  --panel: var(--surface);
+  --panel-soft: var(--surface-muted);
+  --text: var(--text-primary);
+  --muted: var(--text-muted);
+  --green: var(--success);
+  --red: var(--danger);
+  --blue: var(--info);
+  --amber: var(--warning);
+}
+
+[data-theme="dark"] {
+  color-scheme: dark;
+
+  --page-bg: #080e18;
+  --sidebar-bg: #0b1420;
+  --topbar-bg: #0b1420;
+  --surface: #101c2a;
+  --surface-elevated: #142438;
+  --surface-muted: #142132;
+  --text-primary: #edf5ff;
+  --text-secondary: #b8c8d9;
+  --text-muted: #91a2b8;
+  --border: #26394d;
+  --border-strong: #38506a;
+  --accent: #4c8dff;
+  --accent-hover: #6aa2ff;
+  --accent-contrast: #06121f;
+  --success: #36e0b5;
+  --warning: #f4bb65;
+  --danger: #ff727c;
+  --info: #67a9ff;
+  --focus-ring: #4c8dff;
+  --purple: #b19aff;
+  --purple-rgb: 177, 154, 255;
+
+  --accent-rgb: 76, 141, 255;
+  --success-rgb: 54, 224, 181;
+  --warning-rgb: 244, 187, 101;
+  --danger-rgb: 255, 114, 124;
+  --info-rgb: 103, 169, 255;
+
+  --shadow-sm: 0 1px 2px rgba(0, 0, 0, 0.25);
+  --shadow-md: 0 10px 28px rgba(0, 0, 0, 0.28);
+}
+
 :root {
-  font-family: 'DM Sans', sans-serif;
-  color: #e5edf7;
-  background: #0a111b;
+  font-family: var(--font-sans);
+  color: var(--text-primary);
+  background: var(--page-bg);
   font-synthesis: none;
   text-rendering: optimizeLegibility;
   -webkit-font-smoothing: antialiased;
@@ -14,11 +118,14 @@
 }
 
 * { box-sizing: border-box; }
-body { margin: 0; min-width: 320px; min-height: 100vh; }
+body { margin: 0; min-width: 320px; min-height: 100vh; background: var(--page-bg); color: var(--text-primary); }
 button { font: inherit; }
-button:focus-visible { outline: 2px solid #27c8a7; outline-offset: 3px; }
+button:focus-visible,
+input:focus-visible,
+textarea:focus-visible,
+select:focus-visible { outline: 2px solid var(--focus-ring); outline-offset: 3px; }
 a { color: inherit; }
-::selection { background: #1d796a; color: #fff; }
+::selection { background: rgba(var(--accent-rgb), 0.18); color: var(--text-primary); }
 
 /* ===== APISentry Analysis Form ===== */
 
@@ -265,5 +372,73 @@ a { color: inherit; }
   .analysis-result-heading {
     align-items: flex-start;
     flex-direction: column;
+  }
+}
+
+/* Light-theme compatibility for the legacy analysis form styles. */
+[data-theme="light"] .analysis-field label,
+[data-theme="light"] .analysis-json-label { color: var(--text-secondary); }
+
+[data-theme="light"] .analysis-field input,
+[data-theme="light"] .analysis-field select,
+[data-theme="light"] .analysis-field textarea,
+[data-theme="light"] .analysis-json-input {
+  color: var(--text-primary);
+  background: var(--surface);
+  border-color: var(--border);
+}
+
+[data-theme="light"] .analysis-field input::placeholder,
+[data-theme="light"] .analysis-field textarea::placeholder { color: var(--text-muted); }
+
+[data-theme="light"] .analysis-field select option { color: var(--text-primary); background: var(--surface); }
+
+[data-theme="light"] .analysis-field input:focus,
+[data-theme="light"] .analysis-field select:focus,
+[data-theme="light"] .analysis-field textarea:focus,
+[data-theme="light"] .analysis-json-input:focus {
+  border-color: var(--accent);
+  box-shadow: 0 0 0 3px rgba(var(--accent-rgb), 0.14);
+}
+
+[data-theme="light"] .run-analysis-button {
+  color: var(--accent-contrast);
+  background: var(--accent);
+  border-color: var(--accent);
+}
+
+[data-theme="light"] .run-analysis-button:hover { background: var(--accent-hover); }
+
+[data-theme="light"] .analysis-result {
+  color: var(--text-secondary);
+  background: var(--surface);
+  border-color: var(--border);
+}
+
+[data-theme="light"] .analysis-result h3 { color: var(--text-primary); }
+[data-theme="light"] .analysis-result pre { color: var(--text-secondary); }
+
+[data-theme="light"] .analysis-error {
+  color: var(--danger);
+  background: rgba(var(--danger-rgb), 0.06);
+  border-color: rgba(var(--danger-rgb), 0.28);
+}
+
+[data-theme="light"] .analysis-module-tag {
+  color: var(--success);
+  background: rgba(var(--success-rgb), 0.08);
+  border-color: rgba(var(--success-rgb), 0.28);
+}
+
+[data-theme="light"] .analysis-help { color: var(--text-muted); }
+
+[data-theme="light"] .analysis-result-heading span { color: var(--success); }
+
+@media (prefers-reduced-motion: reduce) {
+  *, *::before, *::after {
+    animation-duration: 0.01ms !important;
+    animation-iteration-count: 1 !important;
+    transition-duration: 0.01ms !important;
+    scroll-behavior: auto !important;
   }
 }

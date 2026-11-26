@@ -3,6 +3,7 @@ import base64
 import binascii
 import re
 from typing import Optional, List, Any
+from urllib.parse import urlparse
 
 from pydantic import field_validator, model_validator
 from pydantic_settings import BaseSettings, SettingsConfigDict
@@ -35,6 +36,13 @@ class Settings(BaseSettings):
     # Network / Proxy Configuration
     TRUSTED_PROXIES: List[str] = []
 
+    # API hardening defaults (safe local defaults; tune for production)
+    MAX_REQUEST_BODY_BYTES: int = 1_048_576  # 1 MiB
+    AUTH_RATE_LIMIT_ENABLED: bool = True
+    AUTH_RATE_LIMIT_REQUESTS: int = 20
+    AUTH_RATE_LIMIT_WINDOW_SECONDS: int = 60
+    SECURITY_HEADERS_ENABLED: bool = True
+
     # Database Configuration (Environment managed)
     POSTGRES_SERVER: str = "localhost"
     POSTGRES_PORT: int = 5432
@@ -43,10 +51,23 @@ class Settings(BaseSettings):
     POSTGRES_DB: str = "apisentry_db"
     DATABASE_URL: Optional[str] = None
 
+    # Startup schema creation gate. Production always forces this to False.
+    AUTO_CREATE_SCHEMA: bool = True
+
     # Demo Authentication Feature Flag (Strictly disabled by default, never enabled in production)
     APISENTRY_ENABLE_DEMO_AUTH: bool = False
     DEMO_USERNAME: str = "demo_user"
     DEMO_PASSWORD: Optional[str] = None
+
+    # Demo control-plane routers (Gate E / WP9) are never mounted in production
+    # and require an explicit opt-in in a non-production environment.
+    APISENTRY_ENABLE_DEMO_CONTROL_PLANE: bool = False
+
+    # Gate E isolated local demo-only persistence directory (non-secret).
+    # Empty default resolves to a safe temp subdirectory at runtime.
+    # Configured paths must resolve under the system temp directory to prevent
+    # arbitrary filesystem writes.
+    MITIGATION_DEMO_DB_DIR: str = ""
 
     model_config = SettingsConfigDict(
         env_file=["backend/.env", ".env"],
@@ -92,6 +113,34 @@ class Settings(BaseSettings):
     def normalize_environment(cls, value: Any) -> str:
         return str(value).strip().lower()
 
+    @field_validator("MAX_REQUEST_BODY_BYTES")
+    @classmethod
+    def validate_request_body_limit(cls, value: int) -> int:
+        if int(value) < 1024 or int(value) > 100 * 1024 * 1024:
+            raise ValueError("MAX_REQUEST_BODY_BYTES must be between 1024 and 104857600")
+        return int(value)
+
+    @field_validator("JWT_ACCESS_TOKEN_EXPIRE_MINUTES")
+    @classmethod
+    def validate_token_lifetime(cls, value: int) -> int:
+        if int(value) < 1 or int(value) > 10080:
+            raise ValueError("JWT_ACCESS_TOKEN_EXPIRE_MINUTES must be between 1 and 10080")
+        return int(value)
+
+    @field_validator("AUTH_RATE_LIMIT_REQUESTS")
+    @classmethod
+    def validate_auth_rate_limit_requests(cls, value: int) -> int:
+        if int(value) < 1 or int(value) > 100_000:
+            raise ValueError("AUTH_RATE_LIMIT_REQUESTS must be between 1 and 100000")
+        return int(value)
+
+    @field_validator("AUTH_RATE_LIMIT_WINDOW_SECONDS")
+    @classmethod
+    def validate_auth_rate_limit_window(cls, value: int) -> int:
+        if int(value) < 1 or int(value) > 86_400:
+            raise ValueError("AUTH_RATE_LIMIT_WINDOW_SECONDS must be between 1 and 86400")
+        return int(value)
+
     @classmethod
     def _is_obviously_predictable_secret(cls, secret: str) -> bool:
         if len(set(secret)) <= 2:
@@ -131,7 +180,22 @@ class Settings(BaseSettings):
 
     @model_validator(mode="after")
     def validate_security_configuration(self) -> "Settings":
+        normalized_origins: List[str] = []
+        for origin in self.CORS_ORIGINS:
+            o = str(origin).strip()
+            if not o:
+                continue
+            if o == "*":
+                raise ValueError("CORS_ORIGINS must not include '*' when credentials are supported")
+            parsed = urlparse(o)
+            if parsed.scheme not in {"http", "https"} or not parsed.netloc:
+                raise ValueError("CORS_ORIGINS entries must be absolute http(s) origins")
+            normalized_origins.append(o.rstrip("/"))
+        self.CORS_ORIGINS = normalized_origins
+
         if self.ENVIRONMENT == "production":
+            # Production schema changes must be explicit, reviewed Alembic operations.
+            self.AUTO_CREATE_SCHEMA = False
             secret = self.JWT_SECRET_KEY.strip()
             if (
                 not secret
@@ -161,6 +225,30 @@ class Settings(BaseSettings):
         if self.ENVIRONMENT == "production":
             return False
         return bool(self.APISENTRY_ENABLE_DEMO_AUTH and self.DEMO_PASSWORD)
+
+    @property
+    def is_demo_control_plane_enabled(self) -> bool:
+        """Gate E / WP9 demo routers require explicit non-production opt-in."""
+        if self.ENVIRONMENT == "production":
+            return False
+        return bool(self.APISENTRY_ENABLE_DEMO_CONTROL_PLANE)
+
+    def deployment_summary(self) -> dict[str, Any]:
+        """Non-secret configuration snapshot for startup logs and health checks."""
+        return {
+            "environment": self.ENVIRONMENT,
+            "debug": bool(self.DEBUG),
+            "auto_create_schema": bool(self.AUTO_CREATE_SCHEMA),
+            "cors_origin_count": len(self.CORS_ORIGINS),
+            "max_request_body_bytes": int(self.MAX_REQUEST_BODY_BYTES),
+            "auth_rate_limit_enabled": bool(self.AUTH_RATE_LIMIT_ENABLED),
+            "security_headers_enabled": bool(self.SECURITY_HEADERS_ENABLED),
+            "demo_auth_enabled": self.is_demo_auth_enabled,
+            "demo_control_plane_enabled": self.is_demo_control_plane_enabled,
+            "database_configured": bool(self.DATABASE_URL or self.POSTGRES_PASSWORD),
+            "enforcement_mode": "advisory_only",
+            "production_request_middleware_registered": False,
+        }
 
 
 settings = Settings()

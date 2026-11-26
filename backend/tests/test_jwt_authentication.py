@@ -1,3 +1,5 @@
+import base64
+import json
 from datetime import datetime, timedelta, timezone
 from unittest.mock import MagicMock
 import pytest
@@ -8,6 +10,8 @@ from sqlalchemy.pool import StaticPool
 
 from app.core.config import settings
 from app.core.security import (
+    _b64url_decode,
+    _b64url_encode,
     authenticate_user,
     create_access_token,
     decode_access_token,
@@ -26,16 +30,48 @@ from app.services.bola_analysis_service import analyze_traffic_for_bola
 client = TestClient(app)
 
 
+def _decode_jwt_segment_unchecked(segment: str) -> bytes:
+    """Decode a segment without canonical checks; used only to build adversarial tokens."""
+    padding = "=" * ((4 - len(segment) % 4) % 4)
+    return base64.urlsafe_b64decode((segment + padding).encode("ascii"))
+
+
+def _mutate_segment(segment: str) -> str:
+    """Flip one decoded byte and re-encode canonically."""
+    raw = bytearray(_decode_jwt_segment_unchecked(segment))
+    assert raw
+    raw[0] ^= 0x01
+    return _b64url_encode(bytes(raw))
+
+
+def _noncanonical_variant_with_same_bytes(segment: str) -> str:
+    """Return a different Base64URL spelling that decodes to the same bytes."""
+    decoded = _decode_jwt_segment_unchecked(segment)
+    canonical = _b64url_encode(decoded)
+    alphabet = "ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789-_"
+    for char in alphabet:
+        candidate = canonical[:-1] + char
+        if candidate != canonical and _decode_jwt_segment_unchecked(candidate) == decoded:
+            return candidate
+    raise AssertionError("no noncanonical Base64URL variant found")
+
+
+@pytest.fixture(autouse=True)
+def isolated_auth_database(testing_session_factory):
+    """Route every DB dependency in this module to an isolated in-memory database."""
+    yield testing_session_factory
+
+
 # ---------------------------------------------------------------------------
 # 1. Password Hashing and Verification Unit Tests
 # ---------------------------------------------------------------------------
 
 def test_password_hashing_and_verification():
-    """Verify PBKDF2-HMAC-SHA256 password hashing and constant-time verification."""
+    """Verify bcrypt password hashing and constant-time verification."""
     password = "SuperSecurePassword123!"
     hashed = hash_password(password)
 
-    assert hashed.startswith("pbkdf2_sha256$")
+    assert hashed.startswith("$2b$")
     assert verify_password(password, hashed) is True
     assert verify_password("WrongPassword123!", hashed) is False
     assert verify_password("", hashed) is False
@@ -93,12 +129,29 @@ def test_decode_rejects_expired_token():
         decode_access_token(expired_token)
 
 
+def test_valid_token_segments_are_canonical_base64url():
+    """Tokens minted by create_access_token remain accepted after canonical decoding."""
+    token = create_access_token(
+        subject="canonical_user",
+        extra_claims={"username": "canonical", "role": "viewer"},
+    )
+    segments = token.split(".")
+    assert len(segments) == 3
+    for segment in segments:
+        assert _b64url_encode(_b64url_decode(segment)) == segment
+
+    payload = decode_access_token(token)
+    assert payload["sub"] == "canonical_user"
+    assert payload["role"] == "viewer"
+
+
 def test_decode_rejects_tampered_payload():
-    """Verify that any modification to payload bytes triggers signature mismatch."""
+    """Verify that a changed decoded payload byte triggers signature mismatch."""
     token = create_access_token(subject="user_original")
     parts = token.split(".")
-    # Tamper payload part by flipping characters
-    tampered_payload = parts[1][:-2] + ("aa" if not parts[1].endswith("aa") else "bb")
+    tampered_payload = _mutate_segment(parts[1])
+    assert tampered_payload != parts[1]
+    assert _b64url_decode(tampered_payload) != _b64url_decode(parts[1])
     tampered_token = f"{parts[0]}.{tampered_payload}.{parts[2]}"
 
     with pytest.raises(ValueError, match="tampered"):
@@ -106,20 +159,42 @@ def test_decode_rejects_tampered_payload():
 
 
 def test_decode_rejects_tampered_signature():
-    """Verify that any modification to signature bytes is rejected."""
+    """Verify that a changed decoded signature byte is deterministically rejected."""
     token = create_access_token(subject="user_original")
     parts = token.split(".")
-    tampered_sig = parts[2][:-2] + ("xx" if not parts[2].endswith("xx") else "yy")
+    tampered_sig = _mutate_segment(parts[2])
+    assert tampered_sig != parts[2]
+    assert _b64url_decode(tampered_sig) != _b64url_decode(parts[2])
     tampered_token = f"{parts[0]}.{parts[1]}.{tampered_sig}"
 
     with pytest.raises(ValueError, match="tampered"):
         decode_access_token(tampered_token)
 
 
+def test_decode_rejects_noncanonical_base64url_signature():
+    """A different spelling of the same signature bytes must not be accepted."""
+    token = create_access_token(subject="user_original")
+    parts = token.split(".")
+    noncanonical_sig = _noncanonical_variant_with_same_bytes(parts[2])
+    assert noncanonical_sig != parts[2]
+    assert _decode_jwt_segment_unchecked(noncanonical_sig) == _decode_jwt_segment_unchecked(parts[2])
+
+    with pytest.raises(ValueError, match="Noncanonical Base64URL"):
+        decode_access_token(f"{parts[0]}.{parts[1]}.{noncanonical_sig}")
+
+
+def test_decode_rejects_malformed_and_padded_base64url_signatures():
+    """Malformed characters and padded segments are rejected before HMAC comparison."""
+    token = create_access_token(subject="user_original")
+    parts = token.split(".")
+
+    for candidate in (f"{parts[2]}*", f"{parts[2]}="):
+        with pytest.raises(ValueError, match="Malformed JWT signature"):
+            decode_access_token(f"{parts[0]}.{parts[1]}.{candidate}")
+
+
 def test_decode_rejects_none_algorithm():
     """Verify that tokens specifying the 'none' algorithm attack are strictly rejected."""
-    import base64
-    import json
     header_none = base64.urlsafe_b64encode(json.dumps({"alg": "none", "typ": "JWT"}).encode()).rstrip(b"=").decode()
     payload = base64.urlsafe_b64encode(json.dumps({"sub": "attacker", "exp": 9999999999}).encode()).rstrip(b"=").decode()
     fake_token = f"{header_none}.{payload}."

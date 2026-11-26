@@ -8,11 +8,14 @@ Endpoint:
 """
 
 from datetime import datetime
+import logging
 from typing import Optional
 from fastapi import APIRouter, Depends, Query, HTTPException, status
 from sqlalchemy.orm import Session
 
 from app.db.session import get_db
+
+logger = logging.getLogger("apisentry.api.rate_anomaly")
 from app.schemas.rate_anomaly import RateAnomalyDetectionResult
 from app.detection.rate_anomaly_detector import RateAnomalyDetectorConfig
 from app.services.rate_anomaly_analysis_service import analyze_traffic_for_rate_anomaly
@@ -88,7 +91,8 @@ def analyze_rate_anomaly_traffic(
     except HTTPException:
         raise
     except Exception as exc:
+        logger.exception("Rate anomaly analysis failed")
         raise HTTPException(
             status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
-            detail=f"Database query failure during rate anomaly analysis: {exc}"
+            detail="Rate anomaly analysis could not be completed.",
         ) from exc

@@ -4,7 +4,7 @@
 import logging
 import math
 from pathlib import Path
-from typing import Dict
+from typing import Dict, List
 
 from fastapi import APIRouter, HTTPException, status
 from pydantic import BaseModel, ConfigDict, Field
@@ -48,6 +48,44 @@ class TokenClassificationResponse(BaseModel):
     class_probabilities: Dict[str, float]
 
 
+class TokenClassifierFeaturesResponse(BaseModel):
+    """Compatibility metadata for clients building a valid feature payload."""
+
+    available: bool
+    feature_names: List[str] = Field(default_factory=list)
+    checkpoint_version: int | None = None
+
+
+def _load_classifier() -> TokenUsageRandomForestClassifier:
+    """Load the trusted local artifact and normalize load failures."""
+    return TokenUsageRandomForestClassifier.load(str(MODEL_PATH))
+
+
+@router.get(
+    "/features",
+    response_model=TokenClassifierFeaturesResponse,
+    summary="Return the saved token classifier feature schema",
+)
+def token_classifier_features() -> TokenClassifierFeaturesResponse:
+    """Expose model metadata without exposing model internals or credentials."""
+    try:
+        classifier = _load_classifier()
+    except FileNotFoundError:
+        return TokenClassifierFeaturesResponse(available=False)
+    except Exception:
+        logger.exception("Could not load token classifier metadata")
+        raise HTTPException(
+            status_code=status.HTTP_503_SERVICE_UNAVAILABLE,
+            detail="Token classifier model could not be loaded.",
+        ) from None
+
+    return TokenClassifierFeaturesResponse(
+        available=True,
+        feature_names=classifier.feature_names,
+        checkpoint_version=classifier.CHECKPOINT_VERSION,
+    )
+
+
 @router.post(
     "/predict",
     response_model=TokenClassificationResponse,
@@ -68,7 +106,7 @@ def predict_token_usage(
     logger.info("Loading token classifier model from: %s", MODEL_PATH)
 
     try:
-        classifier = TokenUsageRandomForestClassifier.load(str(MODEL_PATH))
+        classifier = _load_classifier()
 
     except FileNotFoundError:
         logger.exception("Token classifier checkpoint file was not found")
@@ -87,7 +125,7 @@ def predict_token_usage(
 
         raise HTTPException(
             status_code=status.HTTP_503_SERVICE_UNAVAILABLE,
-            detail=f"Token classifier model could not be loaded: {exc}",
+            detail="Token classifier model could not be loaded.",
         ) from exc
 
     expected_names = classifier.feature_names

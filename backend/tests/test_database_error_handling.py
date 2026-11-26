@@ -58,7 +58,8 @@ def test_bola_api_returns_500_on_database_failure():
     with patch("app.api.v1.routes.bola.analyze_traffic_for_bola", side_effect=RuntimeError("Simulated DB Crash")):
         response = client.get("/api/v1/security/bola/analyze")
         assert response.status_code == 500
-        assert "Database query failure during BOLA analysis" in response.json()["detail"]
+        assert response.json()["detail"] == "BOLA analysis could not be completed."
+        assert "Simulated DB Crash" not in response.json()["detail"]
 
 
 def test_bruteforce_api_returns_500_on_database_failure():
@@ -66,7 +67,8 @@ def test_bruteforce_api_returns_500_on_database_failure():
     with patch("app.api.v1.routes.bruteforce.analyze_traffic_for_bruteforce", side_effect=RuntimeError("Simulated DB Crash")):
         response = client.get("/api/v1/security/bruteforce/analyze")
         assert response.status_code == 500
-        assert "Database query failure during brute-force analysis" in response.json()["detail"]
+        assert response.json()["detail"] == "Brute-force analysis could not be completed."
+        assert "Simulated DB Crash" not in response.json()["detail"]
 
 
 def test_rate_anomaly_api_returns_500_on_database_failure():
@@ -74,7 +76,8 @@ def test_rate_anomaly_api_returns_500_on_database_failure():
     with patch("app.api.v1.routes.rate_anomaly.analyze_traffic_for_rate_anomaly", side_effect=RuntimeError("Simulated DB Crash")):
         response = client.get("/api/v1/security/rate-anomaly/analyze")
         assert response.status_code == 500
-        assert "Database query failure during rate anomaly analysis" in response.json()["detail"]
+        assert response.json()["detail"] == "Rate anomaly analysis could not be completed."
+        assert "Simulated DB Crash" not in response.json()["detail"]
 
 
 def test_behavior_api_returns_500_on_database_failure():
@@ -82,4 +85,37 @@ def test_behavior_api_returns_500_on_database_failure():
     with patch("app.api.v1.routes.behavior.analyze_traffic_for_behavior_risk", side_effect=RuntimeError("Simulated DB Crash")):
         response = client.get("/api/v1/security/behavior/analyze")
         assert response.status_code == 500
-        assert "Database query failure during behavioral risk analysis" in response.json()["detail"]
+        assert response.json()["detail"] == "Behavioral risk analysis could not be completed."
+        assert "Simulated DB Crash" not in response.json()["detail"]
+
+
+def test_traffic_trend_api_returns_500_on_database_failure():
+    """Verify Traffic Trends API returns HTTP 500 when database failure occurs."""
+    with patch("app.api.v1.routes.traffic_trends._fetch_window_logs", side_effect=RuntimeError("Simulated DB Crash")):
+        response = client.get(
+            "/api/v1/security/traffic-trends/analyze",
+            params={
+                "baseline_start": "2026-01-01T00:00:00Z",
+                "baseline_end": "2026-01-01T01:00:00Z",
+                "target_start": "2026-01-01T01:00:01Z",
+                "target_end": "2026-01-01T02:00:00Z",
+            },
+        )
+        assert response.status_code == 500
+        assert response.json()["detail"] == "Traffic trend analysis could not be completed."
+        assert "Simulated DB Crash" not in response.json()["detail"]
+
+
+def test_clustering_api_returns_500_on_internal_failure():
+    """Verify Clustering API returns HTTP 500 when internal failure occurs."""
+    with patch("app.api.v1.routes.clustering.compare_clustering_detectors", side_effect=RuntimeError("Simulated Failure")):
+        response = client.post(
+            "/api/v1/security/clustering/analyze",
+            json={
+                "feature_vectors": [[1.0, 2.0], [3.0, 4.0], [5.0, 6.0]],
+                "contamination": 0.1,
+            },
+        )
+        assert response.status_code == 500
+        assert response.json()["detail"] == "Clustering analysis could not be completed."
+        assert "Simulated Failure" not in response.json()["detail"]

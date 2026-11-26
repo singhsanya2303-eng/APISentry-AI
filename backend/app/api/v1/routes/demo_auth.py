@@ -10,10 +10,11 @@ SECURITY CONTRACT:
   - Handled by RequestLoggingMiddleware for traffic logging and persistence.
 """
 
-from fastapi import APIRouter, HTTPException, status
+from fastapi import APIRouter, HTTPException, Request, status
 from pydantic import BaseModel, Field
 
 from app.core.config import settings
+from app.core.rate_limit import enforce_auth_rate_limit
 from app.core.security import authenticate_user
 
 router = APIRouter(tags=["Demo / Development Only"])
@@ -43,10 +44,11 @@ class DemoLoginResponse(BaseModel):
         "Strictly intended for local development demonstrations."
     ),
 )
-def demo_login(credentials: DemoLoginRequest):
+def demo_login(credentials: DemoLoginRequest, request: Request):
     """
     Handle demo authentication attempts using explicitly configured credentials.
     """
+    enforce_auth_rate_limit(request, "demo.login")
     user = authenticate_user(credentials.username, credentials.password)
     if user and user["username"] == settings.DEMO_USERNAME.strip().lower():
         return DemoLoginResponse(
