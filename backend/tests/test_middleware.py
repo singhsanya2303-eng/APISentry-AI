@@ -52,6 +52,24 @@ def test_query_params_sanitization():
     assert sanitized["token"] == "***MASKED***"
 
 
+def test_query_params_sanitization_covers_noncanonical_secret_keys():
+    raw_params = {
+        "authToken": "secret-value-one",
+        "auth_token": "secret-value-two",
+        "access-token": "secret-value-three",
+        "session_id": "secret-value-four",
+        "X-API-KEY": "secret-value-five",
+        "creditCardNumber": "secret-value-six",
+        "safe_tag": "public",
+    }
+    sanitized = sanitize_query_params(raw_params)
+
+    for key in ("authToken", "auth_token", "access-token", "session_id", "X-API-KEY", "creditCardNumber"):
+        assert sanitized[key] == "***MASKED***"
+    assert sanitized["safe_tag"] == "public"
+    assert "secret-value" not in str(sanitized)
+
+
 def test_client_ip_no_forwarded_header(monkeypatch):
     """Direct peer IP is recorded when no X-Forwarded-For header is present."""
     mock_persist = MagicMock(return_value=True)

@@ -34,6 +34,9 @@ jobs:
       - name: Install backend dependencies
         run: python -m pip install -r backend/requirements.txt
 
+      - name: Backend dependency check
+        run: python -m pip check
+
       - name: Install frontend dependencies
         run: npm ci --prefix frontend
 
@@ -58,4 +61,17 @@ jobs:
         run: npm --prefix frontend run lint
 
       - name: Frontend production build
-        run: npm --prefix frontend run build -- --outDir "$RUNNER_TEMP/apisentry-frontend-build"
+        shell: bash
+        run: |
+          build_root="$(mktemp -d "${RUNNER_TEMP}/apisentry-frontend-build.XXXXXX")"
+          env_dir="$build_root/env"
+          out_dir="$build_root/site"
+          mkdir -p "$env_dir"
+          cp frontend/.env.staging.example "$env_dir/.env"
+          export APISENTRY_VITE_ENV_DIR="$env_dir"
+          npm --prefix frontend run build -- --outDir "$out_dir"
+          if grep -R -l -E '127\.0\.0\.1:8000|localhost:8000' "$out_dir" >/dev/null; then
+            echo "Production bundle contains a localhost API fallback."
+            exit 1
+          fi
+          grep -R -q -F 'https://api.example.test' "$out_dir"

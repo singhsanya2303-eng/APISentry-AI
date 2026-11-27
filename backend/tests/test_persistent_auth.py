@@ -14,6 +14,12 @@ client = TestClient(app)
 
 
 @pytest.fixture(autouse=True)
+def enable_public_registration(monkeypatch):
+    """These legacy flow tests explicitly opt into non-production registration."""
+    monkeypatch.setattr(settings, "APISENTRY_ENABLE_PUBLIC_REGISTRATION", True)
+
+
+@pytest.fixture(autouse=True)
 def isolate_traffic_logging(monkeypatch):
     """Keep request logging out of the configured PostgreSQL database."""
     monkeypatch.setattr(

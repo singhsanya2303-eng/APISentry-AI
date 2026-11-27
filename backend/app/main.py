@@ -11,7 +11,8 @@ from starlette.exceptions import HTTPException as StarletteHTTPException
 from app.api.v1.router import build_api_router
 from app.core.config import settings
 from app.core.operational_logging import log_operation
-from app.core.security import seed_demo_user
+from app.core.security import cleanup_expired_revoked_tokens, seed_demo_user
+from app.db import session as db_session_module
 from app.db.init_db import init_db
 from app.utils.middleware import (
     RequestLoggingMiddleware,
@@ -25,10 +26,44 @@ logger = logging.getLogger("apisentry.operations")
 
 def _auto_create_schema_enabled() -> bool:
     """Return whether startup may create schema objects (never in production)."""
-    return (
-        bool(settings.AUTO_CREATE_SCHEMA)
-        and str(settings.ENVIRONMENT).strip().lower() != "production"
-    )
+    return bool(settings.AUTO_CREATE_SCHEMA) and not settings.is_production
+
+
+def _cleanup_expired_revocations() -> None:
+    """Run one best-effort startup cleanup; never block app startup on DB failure."""
+    cleanup_session = None
+    try:
+        cleanup_session = db_session_module.SessionLocal()
+        cleanup_expired_revoked_tokens(cleanup_session, force=True)
+    except Exception:
+        logger.warning("startup revocation cleanup skipped after failure", exc_info=True)
+    finally:
+        if cleanup_session is not None:
+            try:
+                cleanup_session.close()
+            except Exception:
+                logger.debug("startup revocation cleanup session close failed", exc_info=True)
+
+
+def _revocation_store_status() -> str:
+    """Report whether the durable logout revocation table is queryable.
+
+    A missing or unusable revoked_tokens table must make readiness fail so an
+    operator can apply migration 0004 before routing authenticated traffic.
+    """
+    try:
+        from app.db.session import SessionLocal
+        from app.models.revoked_token import RevokedToken
+
+        db = SessionLocal()
+        try:
+            db.query(RevokedToken.id).limit(1).all()
+            return "ok"
+        finally:
+            db.close()
+    except Exception:
+        logger.debug("revocation store readiness check failed", exc_info=True)
+        return "unavailable"
 
 
 def _request_enforcement_registered(application: FastAPI) -> bool:
@@ -61,6 +96,7 @@ def create_app(cors_origins=None):
         try:
             if _auto_create_schema_enabled():
                 init_db()
+            _cleanup_expired_revocations()
             yield
         finally:
             log_operation(
@@ -85,8 +121,13 @@ def create_app(cors_origins=None):
         if cors_origins is None
         else cors_origins
     )
-    if str(settings.ENVIRONMENT).strip().lower() != "production":
-        for origin in ("http://127.0.0.1:5174", "http://localhost:5174"):
+    if not settings.is_production:
+        for origin in (
+            "http://127.0.0.1:5173",
+            "http://localhost:5173",
+            "http://127.0.0.1:5174",
+            "http://localhost:5174",
+        ):
             if origin not in origins:
                 origins.append(origin)
 
@@ -142,7 +183,7 @@ def create_app(cors_origins=None):
     @app.get("/ready", tags=["Health"])
     def readiness_check():
         """Readiness endpoint with minimal dependency checks (no secrets)."""
-        checks = {"database": "unknown"}
+        checks = {"database": "unknown", "revocation_store": "unknown"}
         try:
             from sqlalchemy import text
             from app.db.session import SessionLocal
@@ -153,8 +194,10 @@ def create_app(cors_origins=None):
                 checks["database"] = "ok"
             finally:
                 db.close()
+            checks["revocation_store"] = _revocation_store_status()
         except Exception:
             checks["database"] = "unavailable"
+            checks["revocation_store"] = "unavailable"
 
         ready = all(v == "ok" for v in checks.values())
         payload = {

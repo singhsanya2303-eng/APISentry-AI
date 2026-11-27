@@ -1,5 +1,6 @@
 import { Bell, LogOut, Menu } from "lucide-react";
 import ThemeToggle from "./ThemeToggle";
+import { backendStateCopy } from "../services/backendStatus.js";
 
 export default function Topbar({
   activeModule,
@@ -23,7 +24,7 @@ export default function Topbar({
       <div className="topbar-actions">
         <div className={`connection-pill ${apiStatus}`}>
           <span className="status-dot" />
-          {apiStatus === "checking" ? "Checking API" : apiStatus === "online" ? "API Connected" : "API Offline"}
+          {backendStateCopy(apiStatus).label}
         </div>
         <ThemeToggle />
         <button className="icon-button notification-button" aria-label="Notifications">

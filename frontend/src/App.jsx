@@ -1,4 +1,4 @@
-import { lazy, Suspense, useEffect, useMemo, useState } from "react";
+import { lazy, Suspense, useEffect, useMemo, useRef, useState } from "react";
 import {
   Activity,
   AlertTriangle,
@@ -25,6 +25,8 @@ import {
   adminApi,
   authApi,
   healthApi,
+  isRequestCancelled,
+  readyApi,
 } from "./services/api";
 import {
   clearAccessToken,
@@ -32,9 +34,22 @@ import {
   setAccessToken,
   UNAUTHORIZED_EVENT,
 } from "./services/tokenStorage";
+import {
+  BACKEND_STATES,
+  READINESS_POLL_DELAYS_MS,
+  READINESS_POLL_MAX_DURATION_MS,
+  READINESS_REQUEST_TIMEOUT_MS,
+  backendStateCopy,
+  classifyBackendState,
+  isReadinessCancelled,
+  readinessAttemptCount,
+  readinessRequestTimeout,
+} from "./services/backendStatus";
+import { isPublicRegistrationAvailable } from "./services/registrationPolicy";
 import Sidebar from "./components/Sidebar";
 import Topbar from "./components/Topbar";
 import SecurityOverview from "./components/SecurityOverview";
+import ViewerLanding from "./components/ViewerLanding";
 import {
   EmptyState,
   ErrorState,
@@ -67,30 +82,20 @@ const modules = [
   { label: "HTTP Payload Classifier", method: "POST", path: "/api/v1/security/payload-classifier/predict", icon: Braces },
 ];
 
-const WRITE_MODULE_LABELS = new Set([
-  "Clustering",
-  "Token Classification",
-  "HTTP Payload Classifier",
-]);
-
 // Read-only analysis modules restricted to Admin and Analyst by the UI. The
 // backend dependency remains the authoritative authorization boundary.
 const ANALYST_MODULE_LABELS = new Set(["Bot Detection", "Bot Mitigation"]);
 
-// Every security analysis route denies Viewer JWTs in the backend dependency.
-// Keep the UI consistent by hiding all of these modules from Viewer.
-const VIEWER_DENIED_MODULE_LABELS = new Set([
-  "Traffic Trend",
-  "Behavioral Risk",
-  "BOLA Detection",
-  "Brute-Force",
-  "Rate Anomaly",
-]);
 const ROLE_LABELS = {
   admin: "Administrator",
   analyst: "Analyst",
   viewer: "Viewer",
 };
+const READINESS_ATTEMPTS = readinessAttemptCount(READINESS_POLL_DELAYS_MS);
+const RUNTIME_ENV = import.meta.env || {};
+const PUBLIC_REGISTRATION_AVAILABLE = isPublicRegistrationAvailable(RUNTIME_ENV);
+const REGISTRATION_DISABLED_MESSAGE =
+  "Public registration is disabled. Ask an administrator for an account.";
 
 function toProfile(user) {
   return {
@@ -102,9 +107,34 @@ function toProfile(user) {
   };
 }
 
+function waitForReadinessDelay(delayMs, signal, deadline) {
+  return new Promise((resolve, reject) => {
+    if (signal.aborted) {
+      reject(new DOMException("Readiness polling cancelled", "AbortError"));
+      return;
+    }
+    const remaining = deadline - Date.now();
+    if (remaining <= 0) {
+      resolve();
+      return;
+    }
+
+    const onAbort = () => {
+      clearTimeout(timeoutId);
+      reject(new DOMException("Readiness polling cancelled", "AbortError"));
+    };
+    const timeoutId = setTimeout(() => {
+      signal.removeEventListener("abort", onAbort);
+      resolve();
+    }, Math.min(delayMs, remaining));
+    signal.addEventListener("abort", onAbort, { once: true });
+  });
+}
+
 function App() {
-  const [apiStatus, setApiStatus] = useState("checking");
+  const [apiStatus, setApiStatus] = useState(BACKEND_STATES.CHECKING);
   const [health, setHealth] = useState(null);
+  const [readiness, setReadiness] = useState(null);
   const [healthError, setHealthError] = useState("");
   const [loading, setLoading] = useState(false);
   const [activeModule, setActiveModule] = useState("Overview");
@@ -126,6 +156,30 @@ function App() {
   const [adminUsers, setAdminUsers] = useState([]);
   const [adminError, setAdminError] = useState("");
   const [adminLoading, setAdminLoading] = useState(false);
+  const readinessRunRef = useRef(0);
+  const readinessAbortRef = useRef(null);
+  const manualReadinessRunsRef = useRef(new Set());
+
+  function cancelReadinessPolling() {
+    readinessRunRef.current += 1;
+    const controller = readinessAbortRef.current;
+    if (controller) controller.abort();
+    readinessAbortRef.current = null;
+    // A cancelled check must not leave a manual spinner or disabled refresh
+    // button behind. This runs on logout, unauthorized events, and unmount too.
+    if (manualReadinessRunsRef.current.size > 0) {
+      manualReadinessRunsRef.current.clear();
+      setLoading(false);
+    }
+  }
+
+  function pollingCancelled(controller, runId) {
+    return isReadinessCancelled(
+      controller.signal,
+      runId,
+      readinessRunRef.current
+    );
+  }
 
   async function signIn(identifier, password) {
     const data = await authApi.login({ username: identifier, password });
@@ -135,6 +189,7 @@ function App() {
     setAuthStatus("authenticated");
     setAuthError("");
     setAuthForm((previous) => ({ ...previous, password: "" }));
+    checkHealth();
   }
 
   async function handleLogin(event) {
@@ -154,6 +209,12 @@ function App() {
 
   async function handleRegister(event) {
     event.preventDefault();
+    // Defence in depth: production is owner-provisioned only, even if client
+    // state is manipulated or a stale bundle still exposes register mode.
+    if (!PUBLIC_REGISTRATION_AVAILABLE) {
+      setAuthError(REGISTRATION_DISABLED_MESSAGE);
+      return;
+    }
     setAuthSubmitting(true);
     setAuthError("");
     try {
@@ -174,6 +235,7 @@ function App() {
   }
 
   async function handleLogout() {
+    cancelReadinessPolling();
     try {
       await authApi.logout();
     } catch {
@@ -185,35 +247,116 @@ function App() {
     setAuthError("");
     setActiveModule("Overview");
     setAnalysisResults({});
+    setHealth(null);
+    setReadiness(null);
+    setHealthError("");
+    setApiStatus(BACKEND_STATES.CHECKING);
   }
 
-  async function checkHealth() {
-    setLoading(true);
+  async function checkHealth({ manual = false } = {}) {
+    cancelReadinessPolling();
+    const runId = readinessRunRef.current;
+    const controller = new AbortController();
+    readinessAbortRef.current = controller;
+    const deadline = Date.now() + READINESS_POLL_MAX_DURATION_MS;
+    const requestOptions = () => ({
+      signal: controller.signal,
+      timeoutMs: readinessRequestTimeout(deadline),
+    });
+
+    if (manual) {
+      manualReadinessRunsRef.current.add(runId);
+      setLoading(true);
+    }
     setHealthError("");
 
     try {
-      const data = await healthApi();
-      setHealth(data);
-      setApiStatus("online");
-      setLastChecked(new Date());
-    } catch (error) {
-      setHealth(null);
-      setApiStatus("offline");
-      setHealthError(
-        error instanceof Error ? error.message : "Unable to reach the API."
-      );
-      setLastChecked(new Date());
+      for (let attempt = 0; attempt < READINESS_ATTEMPTS; attempt += 1) {
+        if (pollingCancelled(controller, runId)) return;
+        if (Date.now() >= deadline) {
+          setApiStatus(BACKEND_STATES.OFFLINE);
+          setLastChecked(new Date());
+          return;
+        }
+
+        if (attempt > 0) {
+          try {
+            await waitForReadinessDelay(
+              READINESS_POLL_DELAYS_MS[attempt - 1],
+              controller.signal,
+              deadline
+            );
+          } catch (error) {
+            if (isRequestCancelled(error)) return;
+          }
+        }
+        if (pollingCancelled(controller, runId)) return;
+        if (Date.now() >= deadline) {
+          setApiStatus(BACKEND_STATES.OFFLINE);
+          setLastChecked(new Date());
+          return;
+        }
+
+        const finalAttempt =
+          attempt === READINESS_ATTEMPTS - 1 ||
+          Date.now() + READINESS_REQUEST_TIMEOUT_MS >= deadline;
+        let healthOk = false;
+        let readyState = "network_error";
+
+        try {
+          const data = await healthApi(requestOptions());
+          if (pollingCancelled(controller, runId)) return;
+          healthOk = true;
+          setHealth(data);
+          setHealthError("");
+        } catch (error) {
+          if (pollingCancelled(controller, runId) || isRequestCancelled(error)) return;
+          healthOk = false;
+          setHealth(null);
+          setHealthError(
+            error instanceof Error ? error.message : "Unable to reach the API."
+          );
+        }
+
+        if (healthOk) {
+          try {
+            const data = await readyApi(requestOptions());
+            if (pollingCancelled(controller, runId)) return;
+            readyState = "ready";
+            setReadiness(data);
+            setApiStatus(BACKEND_STATES.ONLINE);
+            setLastChecked(new Date());
+            return;
+          } catch (error) {
+            if (pollingCancelled(controller, runId) || isRequestCancelled(error)) return;
+            readyState = error?.status === 503 ? "not_ready" : "network_error";
+            setReadiness(error?.data || { status: "not_ready" });
+            setHealthError(
+              error instanceof Error ? error.message : "Readiness check failed."
+            );
+          }
+        } else {
+          setReadiness(null);
+        }
+
+        setApiStatus(classifyBackendState({ healthOk, readyState, finalAttempt }));
+        setLastChecked(new Date());
+      }
     } finally {
-      setLoading(false);
+      if (readinessAbortRef.current === controller) {
+        readinessAbortRef.current = null;
+      }
+      if (manual) {
+        // Clear this run's own spinner even when a newer check superseded it.
+        manualReadinessRunsRef.current.delete(runId);
+        if (manualReadinessRunsRef.current.size === 0) setLoading(false);
+      }
     }
   }
 
   useEffect(() => {
-    const timeoutId = window.setTimeout(() => {
-      checkHealth();
-    }, 0);
-
-    return () => window.clearTimeout(timeoutId);
+    checkHealth();
+    return () => cancelReadinessPolling();
   }, []);
 
   // Restore a persistent session on first load using the stored bearer token.
@@ -249,6 +392,7 @@ function App() {
 
   useEffect(() => {
     function handleUnauthorized(event) {
+      cancelReadinessPolling();
       clearAccessToken();
       setCurrentUser(null);
       setAuthStatus("anonymous");
@@ -256,6 +400,9 @@ function App() {
         event.detail || "Your session expired. Please sign in again."
       );
       setActiveModule("Overview");
+      setHealth(null);
+      setReadiness(null);
+      setApiStatus(BACKEND_STATES.CHECKING);
     }
 
     window.addEventListener(UNAUTHORIZED_EVENT, handleUnauthorized);
@@ -300,20 +447,15 @@ function App() {
     .toUpperCase();
   const canUseBotAnalysis =
     currentUser?.role === "admin" || currentUser?.role === "analyst";
+  // Any role without admin/analyst analysis rights is restricted to the
+  // read-only status surface. The backend dependency remains authoritative.
+  const isRestrictedViewer = !canUseBotAnalysis;
   // Gate C requires admin/analyst for every mitigation admin route. Viewer has
   // no permitted Gate C resource, so the navigation entry is hidden entirely.
   const canUseMitigationAdmin = canUseBotAnalysis;
-  const visibleModules = modules.filter(({ label }) => {
-    if (ANALYST_MODULE_LABELS.has(label)) return canUseBotAnalysis;
-    if (
-      currentUser?.role === "viewer" &&
-      (WRITE_MODULE_LABELS.has(label) ||
-        VIEWER_DENIED_MODULE_LABELS.has(label))
-    ) {
-      return false;
-    }
-    return true;
-  });
+  const visibleModules = isRestrictedViewer
+    ? []
+    : modules.filter(({ label }) => !ANALYST_MODULE_LABELS.has(label) || canUseBotAnalysis);
   const trafficResult = analysisResults["Traffic Trend"];
   const trafficPredictions = useMemo(() => {
     return Array.isArray(trafficResult?.predictions)
@@ -433,19 +575,25 @@ function App() {
     return signals.slice(0, 5);
   }, [analysisResults, trafficPredictions]);
 
-  const navItems = [
-    { label: "Overview", icon: LayoutDashboard },
-    ...(canUseBotAnalysis
-      ? [{ label: "Threat Detection", target: "Behavioral Risk", icon: ShieldAlert }]
-      : []),
-    { label: "API Modules", target: "API Modules", icon: Network },
-    ...(canUseMitigationAdmin
-      ? [{ label: "Mitigation Control", icon: SlidersHorizontal }]
-      : []),
-    ...(currentUser?.role === "admin"
-      ? [{ label: "User Administration", icon: Users }]
-      : []),
-  ];
+  const navItems = isRestrictedViewer
+    ? [
+        { label: "Overview", icon: LayoutDashboard },
+        { label: "Service Status", target: "Service Status", icon: Activity },
+      ]
+    : [
+        { label: "Overview", icon: LayoutDashboard },
+        ...(canUseBotAnalysis
+          ? [{ label: "Threat Detection", target: "Behavioral Risk", icon: ShieldAlert }]
+          : []),
+        { label: "API Modules", target: "API Modules", icon: Network },
+        ...(canUseMitigationAdmin
+          ? [{ label: "Mitigation Control", icon: SlidersHorizontal }]
+          : []),
+        ...(currentUser?.role === "admin"
+          ? [{ label: "User Administration", icon: Users }]
+          : []),
+      ];
+  const statusCopy = backendStateCopy(apiStatus);
 
   if (authStatus !== "authenticated") {
     return (
@@ -455,6 +603,8 @@ function App() {
         error={authError}
         submitting={authSubmitting}
         checking={authStatus === "checking"}
+        registrationAvailable={PUBLIC_REGISTRATION_AVAILABLE}
+        registrationDisabledMessage={REGISTRATION_DISABLED_MESSAGE}
         onModeChange={setAuthMode}
         onFieldChange={(field, value) =>
           setAuthForm((previous) => ({ ...previous, [field]: value }))
@@ -474,6 +624,7 @@ function App() {
         roleLabel={ROLE_LABELS[currentUser?.role] || currentUser?.role || "Viewer"}
         userInitials={userInitials}
         mobileMenu={mobileMenu}
+        viewerMode={isRestrictedViewer}
         onNavigate={(target) => {
           setActiveModule(target);
           setMobileMenu(false);
@@ -495,12 +646,24 @@ function App() {
           <section className="page-heading">
             <div>
               <div className="eyebrow"><span className="eyebrow-line" /> API SECURITY INTELLIGENCE</div>
-              <h1>{activeModule === "Overview" ? "Security Overview" : activeModule}</h1>
+              <h1>
+                {activeModule === "Overview"
+                  ? isRestrictedViewer
+                    ? "Viewer Overview"
+                    : "Security Overview"
+                  : activeModule}
+              </h1>
               <p className="page-subtitle">
-                Monitor API behavior, inspect detection modules, and assess service health.
+                {isRestrictedViewer
+                  ? "Review your read-only account and backend service status."
+                  : "Monitor API behavior, inspect detection modules, and assess service health."}
               </p>
             </div>
-            <button className="refresh-button" onClick={checkHealth} disabled={loading}>
+            <button
+              className="refresh-button"
+              onClick={() => checkHealth({ manual: true })}
+              disabled={loading}
+            >
               <RefreshCw size={16} className={loading ? "spin" : ""} />
               {loading ? "Checking..." : "Refresh status"}
             </button>
@@ -508,31 +671,47 @@ function App() {
 
           <section className={`api-banner ${apiStatus}`}>
             <div className="banner-icon">
-              {apiStatus === "online" ? <CheckCircle2 size={22} /> : apiStatus === "offline" ? <AlertTriangle size={22} /> : <Activity size={22} />}
+              {apiStatus === "online" ? (
+                <CheckCircle2 size={22} />
+              ) : apiStatus === "offline" ? (
+                <AlertTriangle size={22} />
+              ) : (
+                <Activity size={22} />
+              )}
             </div>
             <div className="banner-copy">
               <strong>
-                {apiStatus === "checking" && "Connecting to APISentry backend"}
-                {apiStatus === "online" && `${health?.service || "APISentry API"} is reachable`}
-                {apiStatus === "offline" && "Backend connection unavailable"}
+                {apiStatus === "online"
+                  ? `${health?.service || "APISentry API"} is reachable and ready`
+                  : statusCopy.banner}
               </strong>
               <p>
-                {apiStatus === "checking" && "Checking the health endpoint. Please wait."}
-                {apiStatus === "online" &&
-                  (trafficResult
+                {apiStatus === "online"
+                  ? trafficResult
                     ? "Backend is reachable. Latest Traffic Trend analysis is loaded in this session."
                     : hasAnyResult
                       ? `Backend is reachable. ${Object.keys(analysisResults).length} analysis module(s) run in this session.`
-                      : "Backend is reachable. Run a detection module to load analysis data.")}
-                {apiStatus === "offline" && (healthError || "Start the FastAPI backend and check its configuration.")}
+                      : "Backend is reachable. Run a detection module to load analysis data."
+                  : healthError && apiStatus !== "checking"
+                    ? healthError
+                    : statusCopy.message}
               </p>
             </div>
-            <span className="banner-tag">
-              {apiStatus === "online" ? "CONNECTED" : apiStatus === "checking" ? "CHECKING" : "NEEDS ATTENTION"}
-            </span>
+            <span className="banner-tag">{statusCopy.tag}</span>
           </section>
 
-          {activeModule === "Overview" ? (
+          {isRestrictedViewer &&
+          (activeModule === "Overview" || activeModule === "Service Status") ? (
+            <ViewerLanding
+              profile={currentUser}
+              health={health}
+              readiness={readiness}
+              apiStatus={apiStatus}
+              lastChecked={lastChecked}
+              loading={loading}
+              onRefreshHealth={() => checkHealth({ manual: true })}
+            />
+          ) : activeModule === "Overview" ? (
             <SecurityOverview
               apiStatus={apiStatus}
               health={health}
@@ -546,7 +725,7 @@ function App() {
               hasAnyResult={hasAnyResult}
               apiBase={API_BASE}
               loading={loading}
-              onRefreshHealth={checkHealth}
+              onRefreshHealth={() => checkHealth({ manual: true })}
               onSelectModule={setActiveModule}
             />
           ) : activeModule === "User Administration" ? (
@@ -574,9 +753,7 @@ function App() {
               ))}
               <p className="detail-note">The exact HTTP method and required query parameters should be verified in each route definition before running an analysis.</p>
             </section>
-          ) : (ANALYST_MODULE_LABELS.has(activeModule) ||
-                VIEWER_DENIED_MODULE_LABELS.has(activeModule)) &&
-            !canUseBotAnalysis ? (
+          ) : isRestrictedViewer ? (
             <section className="panel detail-panel">
               <div className="panel-header">
                 <div>
@@ -585,7 +762,7 @@ function App() {
                 </div>
                 <ShieldOff size={20} />
               </div>
-              <p className="detail-note">Admin and Analyst roles are required for this read-only analysis. Backend authorization remains authoritative.</p>
+              <p className="detail-note">Admin and Analyst roles are required for analysis modules. Backend authorization remains authoritative.</p>
             </section>
           ) : activeModule === "Bot Detection" && canUseBotAnalysis ? (
             <Suspense fallback={<div className="panel">Loading bot detection…</div>}>
@@ -595,8 +772,7 @@ function App() {
             <Suspense fallback={<div className="panel">Loading mitigation analysis…</div>}>
               <MitigationAnalysis />
             </Suspense>
-          ) : activeModule === "HTTP Payload Classifier" &&
-            currentUser?.role !== "viewer" ? (
+          ) : activeModule === "HTTP Payload Classifier" && canUseBotAnalysis ? (
             <Suspense fallback={<div className="panel">Loading payload classifier…</div>}>
               <HttpPayloadClassifier />
             </Suspense>
@@ -631,11 +807,16 @@ function AuthScreen({
   error,
   submitting,
   checking,
+  registrationAvailable,
+  registrationDisabledMessage,
   onModeChange,
   onFieldChange,
   onSubmit,
 }) {
-  const isLogin = mode === "login";
+  const registrationEnabled = registrationAvailable === true;
+  // Production never renders the registration entry point, even if stale
+  // component state requests register mode.
+  const isLogin = !registrationEnabled || mode === "login";
 
   return (
     <main className="auth-shell">
@@ -654,6 +835,9 @@ function AuthScreen({
             ? "Authenticate with your persistent APISentry account to access protected analysis modules."
             : "Create a viewer account to access the security platform. Elevated roles are assigned by an administrator."}
         </p>
+        {!registrationEnabled && (
+          <p className="auth-policy-note">{registrationDisabledMessage}</p>
+        )}
 
         {checking && (
           <div className="auth-notice">Restoring your secure session…</div>
@@ -709,13 +893,15 @@ function AuthScreen({
           </button>
         </form>
 
-        <button
-          className="auth-switch"
-          type="button"
-          onClick={() => onModeChange(isLogin ? "register" : "login")}
-        >
-          {isLogin ? "Need an account? Register" : "Already registered? Sign in"}
-        </button>
+        {registrationEnabled && (
+          <button
+            className="auth-switch"
+            type="button"
+            onClick={() => onModeChange(isLogin ? "register" : "login")}
+          >
+            {isLogin ? "Need an account? Register" : "Already registered? Sign in"}
+          </button>
+        )}
       </div>
     </main>
   );

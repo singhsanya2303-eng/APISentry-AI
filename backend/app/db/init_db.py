@@ -5,6 +5,18 @@ from app.db.base import Base
 from app.db.session import engine
 
 
+def _production_environment_detected() -> bool:
+    """Fail closed if either the normalized environment or safety property says production.
+
+    The environment check keeps this guard compatible with isolated tests that
+    supply a minimal settings stub without the full Settings interface.
+    """
+    environment_is_production = (
+        str(getattr(settings, "ENVIRONMENT", "")).strip().lower() == "production"
+    )
+    return environment_is_production or bool(getattr(settings, "is_production", False))
+
+
 def init_db() -> None:
     """
     Development/test-only initializer to create database tables and indexes.
@@ -12,7 +24,7 @@ def init_db() -> None:
     Production must use explicit, reviewed Alembic migrations instead. This
     guard is defence in depth even if a caller accidentally invokes init_db().
     """
-    if str(settings.ENVIRONMENT).strip().lower() == "production":
+    if _production_environment_detected():
         raise RuntimeError(
             "Automatic schema creation is disabled in production; use reviewed Alembic migrations."
         )

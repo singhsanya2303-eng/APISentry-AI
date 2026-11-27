@@ -1,5 +1,9 @@
 
 from datetime import datetime, timedelta, timezone
+import os
+from pathlib import Path
+import subprocess
+import sys
 from types import SimpleNamespace
 
 import pytest
@@ -89,3 +93,39 @@ def test_trend_analysis_rejects_empty_baseline():
 
     with pytest.raises(ValueError, match="baseline_logs must not be empty"):
         analyze_traffic_trends([], target)
+
+
+def test_app_import_succeeds_without_torch(tmp_path):
+    """Torch must not be imported during app startup; SAE loads on demand."""
+    backend_dir = Path(__file__).resolve().parents[1]
+    env = dict(os.environ)
+    env["PYTHONPATH"] = str(backend_dir)
+    script = """
+import sys
+class BlockTorch:
+    def find_spec(self, fullname, path=None, target=None):
+        if fullname == "torch" or fullname.startswith("torch."):
+            raise ImportError("torch blocked for test")
+sys.meta_path.insert(0, BlockTorch())
+import app.main
+assert "torch" not in sys.modules
+assert "app.services.stacked_autoencoder_service" not in sys.modules
+assert any(
+    "traffic-trends/analyze" in path
+    for path in app.main.app.openapi()["paths"]
+)
+print("APP_IMPORT_OK")
+"""
+
+    completed = subprocess.run(
+        [sys.executable, "-B", "-c", script],
+        cwd=str(tmp_path),
+        env=env,
+        capture_output=True,
+        text=True,
+        timeout=30,
+        check=False,
+    )
+
+    assert completed.returncode == 0, completed.stderr
+    assert "APP_IMPORT_OK" in completed.stdout

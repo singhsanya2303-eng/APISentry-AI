@@ -16,7 +16,7 @@ function findModule(items, label) {
   return items.find((item) => item.label === label) || null;
 }
 
-function buildNavGroups(navItems, visibleModules) {
+function buildNavGroups(navItems, visibleModules, viewerMode = false) {
   const nav = (target, label) => {
     const item = findNavItem(navItems, target);
     return item ? { ...item, target, label, source: "nav" } : null;
@@ -32,7 +32,8 @@ function buildNavGroups(navItems, visibleModules) {
     {
       label: "OVERVIEW",
       items: [
-        nav("Overview", "Security Dashboard"),
+        nav("Overview", viewerMode ? "Viewer Overview" : "Security Dashboard"),
+        nav("Service Status", "Service Status"),
         nav("API Modules", "API Modules"),
         module("Traffic Trend", "Traffic Analytics"),
       ],
@@ -75,11 +76,12 @@ export default function Sidebar({
   roleLabel,
   userInitials,
   mobileMenu,
+  viewerMode = false,
   onNavigate,
   onCloseMobileMenu,
   onLogout,
 }) {
-  const navGroups = buildNavGroups(navItems, visibleModules);
+  const navGroups = buildNavGroups(navItems, visibleModules, viewerMode);
 
   return (
     <>

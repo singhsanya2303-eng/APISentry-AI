@@ -35,24 +35,29 @@ npm run dev
 ```
 
 `frontend/vite.config.js` does not override the port, so Vite uses its default
-`http://localhost:5173`. The backend CORS template lists `5174` origins from
-earlier isolated demos. If the frontend port differs from your local
-`CORS_ORIGINS`, add the browser origin you actually use to the local backend
-configuration. Do not expose a local demo server publicly.
+`http://localhost:5173`. The backend development CORS template and non-production
+auto-added origins include both `5173` and `5174` loopback origins. If you use a
+different local port, add the browser origin you actually use to the local
+backend configuration. Do not expose a local demo server publicly.
 
 ## API base URL
 
-`src/services/api.js` uses `VITE_API_BASE_URL` when present and otherwise falls
-back to `http://127.0.0.1:8000`. Set `VITE_API_BASE_URL` in a local Vite
-environment file or shell environment when the backend is not at the default
-address. Never commit secrets or a shared browser API key.
+`src/services/api.js` uses `VITE_API_BASE_URL` when present. Local Node tests and
+development imports keep a loopback fallback, but production builds must supply
+an explicit non-loopback HTTPS origin; `vite.config.js` fails the build when it
+is missing or unsafe. Use `frontend/.env.staging.example` for staging/production
+builds. Never place backend secrets in `VITE_*` variables: Vite injects those
+names into browser bundles. `vite.config.js` rejects secret-like `VITE_*` names
+and supports `APISENTRY_VITE_ENV_DIR` so a build can ignore local `.env.local`
+files.
 
 ## Authentication
 
 The login flow obtains a JWT and stores it through `src/services/tokenStorage.js`.
 Protected requests attach the bearer token in `Authorization` headers, and an
-HTTP 401 clears an invalid local session. Browser-delivered API keys are not
-secrets, so server-to-server API keys remain configured only in the backend.
+HTTP 401 clears an invalid local session. The browser has no API-key dependency:
+no source module reads or sends `X-API-Key`, and server-to-server API keys stay
+configured only in the backend.
 
 ## Checks
 
@@ -60,10 +65,24 @@ From the repository root:
 
 ```powershell
 npm run lint
-npm run build
 node --test frontend/tests/*.test.js
 ```
 
-`npm run build` writes generated output to `frontend/dist`; that directory is
-not part of the source contribution. The build command is documented here but
-was not executed during the documentation cleanup task.
+Build into a unique temporary directory outside the repository, using an
+isolated env directory and no `--emptyOutDir`:
+
+```powershell
+$buildRoot = Join-Path $env:TEMP ('apisentry-frontend-build-' + [guid]::NewGuid().ToString('N'))
+$envDir = Join-Path $buildRoot 'env'
+$outDir = Join-Path $buildRoot 'site'
+New-Item -ItemType Directory -Path $envDir -Force | Out-Null
+Copy-Item frontend/.env.staging.example (Join-Path $envDir '.env')
+$env:APISENTRY_VITE_ENV_DIR = $envDir
+# Edit only the temporary copy above so VITE_API_BASE_URL is the HTTPS backend URL.
+npm --prefix frontend run build -- --outDir $outDir
+```
+
+Do not publish the existing local `frontend/dist`. It is an untracked legacy
+artifact from an older revision and may contain credential-shaped material from
+that build. It must not be cleaned, overwritten, or included in a release.
+Always publish only a freshly generated build from the temporary output path.

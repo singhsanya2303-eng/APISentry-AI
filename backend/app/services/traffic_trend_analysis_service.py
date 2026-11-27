@@ -9,9 +9,6 @@ import logging
 from typing import Any, Dict, List
 
 from app.services.traffic_aggregation_service import aggregate_traffic_logs
-from app.services.stacked_autoencoder_service import (
-    StackedAutoencoderDetector,
-)
 
 logger = logging.getLogger("apisentry.analysis.traffic_trends")
 
@@ -69,6 +66,10 @@ def analyze_traffic_trends(
             "predictions": [],
             "summary": "No valid target traffic windows were found.",
         }
+
+    # Defer torch import to the request path that actually needs the SAE.
+    # Importing this module at startup costs ~139 MB RSS and ~6 s in profiling.
+    from app.services.stacked_autoencoder_service import StackedAutoencoderDetector
 
     detector = StackedAutoencoderDetector(
         threshold_percentile=threshold_percentile

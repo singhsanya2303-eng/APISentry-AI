@@ -29,6 +29,7 @@ def test_env_example_is_present_and_contains_no_real_secret() -> None:
         "MAX_REQUEST_BODY_BYTES=",
         "AUTH_RATE_LIMIT_ENABLED=",
         "AUTO_CREATE_SCHEMA=",
+        "APISENTRY_ENABLE_PUBLIC_REGISTRATION=",
     ):
         assert key in text
     assert "REPLACE_WITH_" in text

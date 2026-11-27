@@ -148,8 +148,20 @@ def test_modes_are_distinct_and_derived_from_source():
     assert pre.revision is None and corrected.revision is None
     assert final.revision == "0004_revoked_tokens"
     assert "mitigation_audit_events" in final.tables
+    assert "revoked_tokens" in final.tables
+    assert "revoked_tokens" in verifier._model_tables_by_name()
     assert "alembic_version" in final.tables
     assert "mitigation_policy_state_id_seq" not in final.sequence_owners
+
+
+def test_after_migrations_snapshot_passes_with_revoked_tokens():
+    snapshot = _snapshot(MODE_AFTER_MIGRATIONS)
+    result = verifier.compare_snapshot(
+        snapshot, verifier.expected_structure(MODE_AFTER_MIGRATIONS), None, None
+    )
+
+    assert result.passed
+    assert "revoked_tokens" in snapshot.table_names
 
 
 def test_wrong_varchar_length_fails():

@@ -497,18 +497,20 @@ Start the Vite development server:
 npm run dev
 ```
 
-Frontend URL with the unchanged Vite configuration:
+Frontend URL with the repository's Vite configuration:
 
 ```text
 http://localhost:5173
 ```
 
 `frontend/vite.config.js` does not override the Vite port, so `npm run dev` uses
-Vite's default `5173`. The backend CORS template in `backend/.env.example`
-permits `http://127.0.0.1:5174` and `http://localhost:5174` because earlier
-isolated demos used `5174`. If you run the frontend on `5173`, add that origin
-to your local `CORS_ORIGINS`; if you explicitly start Vite on `5174`, the
-template already allows it. Neither port is a production configuration.
+Vite's default `5173`. The backend development CORS template in
+`backend/.env.example` and non-production `create_app()` both include
+`5173` and `5174` loopback origins; no manual origin edit is needed for the
+default port. If you use a different local port, add that exact browser origin
+to your local `CORS_ORIGINS`. Production builds are validated separately and
+require an explicit HTTPS origin. Neither loopback port is a production
+configuration.
 
 ### 3. Local brute-force demonstration (non-production only)
 
@@ -673,18 +675,19 @@ dependency installation is required for these checks.
 The backend uses Pytest. Run the supported safe suite from the repository root:
 
 ```powershell
-.\.venv\Scripts\python.exe -B -m pytest -p no:cacheprovider -q backend/tests --ignore=backend/tests/test_mitigation_policy_lifecycle_persistence.py
+.\.venv\Scripts\python.exe -B -m pytest -p no:cacheprovider -q backend/tests --ignore=backend/tests/test_mitigation_policy_lifecycle_persistence.py --ignore=backend/tests/test_alembic_baseline.py
 ```
 
 `backend/tests/test_mitigation_policy_lifecycle_persistence.py` is separately
-gated because it requires PostgreSQL persistence testing. It is intentionally
-excluded from this safe command. Do not run it against a protected or
-unapproved database.
+gated because it requires PostgreSQL persistence testing, and
+`backend/tests/test_alembic_baseline.py` is gated because it exercises revision
+history. Both are intentionally excluded from this safe command. Do not run
+them against a protected or unapproved database.
 
 The latest verified result for the safe suite is:
 
 ```text
-1495 passed, 29 warnings
+1545 passed, 29 warnings in 122.78s
 ```
 
 The warnings are dependency/deprecation warnings and did not indicate test
@@ -717,7 +720,7 @@ node --test frontend/tests/*.test.js
 The latest verified result is:
 
 ```text
-33 passed
+52 pass, 0 fail
 ```
 
 Run lint checks from the repository root:
@@ -736,6 +739,18 @@ npm --prefix frontend run build -- --outDir <unique-external-temp-directory>
 Do not use `--emptyOutDir` for that external-output verification. The build
 check confirms that production assets can be generated; it does not mean
 `frontend/dist` was regenerated or modified in the contribution.
+
+### Release candidate documentation
+
+Repository-side release preparation, without any deployment or publication
+action, is recorded in:
+
+- [docs/FINAL_RELEASE_RUNBOOK.md](docs/FINAL_RELEASE_RUNBOOK.md) — local verification evidence, acceptance gates, and limitations.
+- [docs/OWNER_SETUP_CHECKLIST.md](docs/OWNER_SETUP_CHECKLIST.md) — owner-controlled Cloudflare Pages, Render, and Neon setup steps.
+- [docs/DEMO_GUIDE.md](docs/DEMO_GUIDE.md) — role-aware walkthrough and demo boundaries.
+
+These documents do not authorize or perform provider account creation, DNS
+changes, database migration, deployment, or public release.
 
 ### Offline model training
 

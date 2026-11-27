@@ -1,3 +1,4 @@
+/* global __APISENTRY_API_BASE__ */
 import {
   clearAccessToken,
   getAccessToken,
@@ -6,11 +7,22 @@ import {
 
 // Vite injects import.meta.env at build time. The fallback keeps the shared
 // client importable from the Node test runner without reading any local env
-// files or introducing a second configuration mechanism.
+// files or introducing a second configuration mechanism. Production builds are
+// validated by vite.config.js and must define VITE_API_BASE_URL explicitly, so
+// no localhost fallback is emitted into a production bundle.
 const runtimeEnv = import.meta.env || {};
+const configuredApiBase =
+  typeof __APISENTRY_API_BASE__ === "string"
+    ? __APISENTRY_API_BASE__
+    : runtimeEnv.VITE_API_BASE_URL;
+const isProductionBuild = runtimeEnv.PROD === true;
+
+if (isProductionBuild && !configuredApiBase) {
+  throw new Error("VITE_API_BASE_URL is required for production builds");
+}
 
 export const API_BASE =
-  runtimeEnv.VITE_API_BASE_URL || "http://127.0.0.1:8000";
+  configuredApiBase || (isProductionBuild ? "" : "http://127.0.0.1:8000");
 
 function responseDetail(data, response) {
   if (typeof data?.detail === "string") return data.detail;
@@ -33,9 +45,162 @@ function responseDetail(data, response) {
   return response.statusText || `Request failed with HTTP ${response.status}`;
 }
 
+const DEFAULT_REQUEST_TIMEOUT_MS = 15_000;
+const MAX_IDEMPOTENT_GET_RETRIES = 1;
+const RETRYABLE_STATUSES = new Set([502, 503, 504]);
+
+export class ApiRequestError extends Error {
+  constructor(
+    message,
+    {
+      status = null,
+      data = null,
+      reason = "request_failed",
+      aborted = false,
+      timedOut = false,
+      cause,
+    } = {}
+  ) {
+    super(message);
+    this.name = "ApiRequestError";
+    this.status = status;
+    this.data = data;
+    this.reason = reason;
+    this.aborted = aborted;
+    this.timedOut = timedOut;
+    if (cause !== undefined) this.cause = cause;
+  }
+}
+
+export function isRequestCancelled(error) {
+  return Boolean(error?.aborted || error?.name === "AbortError");
+}
+
+function normalizedMethod(method) {
+  return String(method || "GET").toUpperCase();
+}
+
+function isRetryableGet(method, options) {
+  return (
+    normalizedMethod(method) === "GET" &&
+    options.retry !== false &&
+    options.maxRetries !== 0
+  );
+}
+
+function shouldRetry(error, method, options) {
+  if (!isRetryableGet(method, options)) return false;
+  if (error?.timedOut || error?.aborted) return false;
+  if (error?.status && RETRYABLE_STATUSES.has(error.status)) return true;
+  return error?.reason === "network";
+}
+
+async function performRequest({
+  url,
+  method,
+  headers,
+  body,
+  path,
+  timeoutMs,
+  externalSignal,
+}) {
+  const controller = new AbortController();
+  let cancelledByCaller = false;
+  let timedOut = false;
+
+  const abortFromCaller = () => {
+    cancelledByCaller = true;
+    controller.abort();
+  };
+  if (externalSignal) {
+    if (externalSignal.aborted) abortFromCaller();
+    else externalSignal.addEventListener("abort", abortFromCaller, { once: true });
+  }
+  const timeoutId = setTimeout(() => {
+    timedOut = true;
+    controller.abort();
+  }, timeoutMs);
+
+  try {
+    const response = await fetch(url, {
+      method,
+      headers,
+      signal: controller.signal,
+      ...(body !== undefined ? { body: JSON.stringify(body) } : {}),
+    });
+
+    const text = await response.text();
+    let data;
+    try {
+      data = text ? JSON.parse(text) : null;
+    } catch {
+      data = text;
+    }
+
+    if (!response.ok) {
+      // A rejected bearer token invalidates the local session. Login failures
+      // are excluded so a bad password does not emit a global session-expired
+      // event. Aborted requests never enter this branch.
+      if (
+        response.status === 401 &&
+        getAccessToken() &&
+        !path.startsWith("/api/v1/auth/login")
+      ) {
+        clearAccessToken();
+        if (typeof window !== "undefined") {
+          window.dispatchEvent(
+            new CustomEvent(UNAUTHORIZED_EVENT, {
+              detail: responseDetail(data, response),
+            })
+          );
+        }
+      }
+      throw new ApiRequestError(
+        `HTTP ${response.status}: ${responseDetail(data, response)}`,
+        { status: response.status, data, reason: "http" }
+      );
+    }
+
+    return data;
+  } catch (error) {
+    if (error instanceof ApiRequestError) throw error;
+    if (cancelledByCaller || externalSignal?.aborted) {
+      throw new ApiRequestError("Request cancelled", {
+        reason: "aborted",
+        aborted: true,
+        cause: error,
+      });
+    }
+    if (timedOut) {
+      throw new ApiRequestError("Request timed out", {
+        reason: "timeout",
+        timedOut: true,
+        cause: error,
+      });
+    }
+    throw new ApiRequestError(
+      error instanceof Error ? error.message : "Network request failed",
+      { reason: "network", cause: error }
+    );
+  } finally {
+    clearTimeout(timeoutId);
+    if (externalSignal) {
+      externalSignal.removeEventListener("abort", abortFromCaller);
+    }
+  }
+}
+
 export async function apiRequest(
   path,
-  { method = "GET", params, body } = {}
+  {
+    method = "GET",
+    params,
+    body,
+    signal,
+    timeoutMs = DEFAULT_REQUEST_TIMEOUT_MS,
+    retry = true,
+    maxRetries = MAX_IDEMPOTENT_GET_RETRIES,
+  } = {}
 ) {
   const url = new URL(`${API_BASE}${path}`);
 
@@ -49,45 +214,36 @@ export async function apiRequest(
 
   const headers = { Accept: "application/json" };
   const token = getAccessToken();
-
   if (token) headers["Authorization"] = `Bearer ${token}`;
   if (body !== undefined) headers["Content-Type"] = "application/json";
 
-  const response = await fetch(url, {
-    method,
-    headers,
-    ...(body !== undefined ? { body: JSON.stringify(body) } : {}),
-  });
+  const boundedRetries = Number.isInteger(maxRetries)
+    ? Math.max(0, Math.min(maxRetries, MAX_IDEMPOTENT_GET_RETRIES))
+    : 0;
+  const options = { retry, maxRetries: boundedRetries };
 
-  const text = await response.text();
-  let data;
-
-  try {
-    data = text ? JSON.parse(text) : null;
-  } catch {
-    data = text;
-  }
-
-  if (!response.ok) {
-    // A rejected bearer token invalidates the local session. Login failures are
-    // excluded so a bad password does not emit a global session-expired event.
-    if (response.status === 401 && token && !path.startsWith("/api/v1/auth/login")) {
-      clearAccessToken();
-      if (typeof window !== "undefined") {
-        window.dispatchEvent(
-          new CustomEvent(UNAUTHORIZED_EVENT, {
-            detail: responseDetail(data, response),
-          })
-        );
-      }
+  for (let attempt = 0; attempt <= boundedRetries; attempt += 1) {
+    try {
+      return await performRequest({
+        url,
+        method,
+        headers,
+        body,
+        path,
+        timeoutMs,
+        externalSignal: signal,
+      });
+    } catch (error) {
+      const isFinalAttempt = attempt === boundedRetries;
+      if (isFinalAttempt || !shouldRetry(error, method, options)) throw error;
     }
-    throw new Error(`HTTP ${response.status}: ${responseDetail(data, response)}`);
   }
 
-  return data;
+  throw new ApiRequestError("Request failed");
 }
 
-export const healthApi = () => apiRequest("/health");
+export const healthApi = (options) => apiRequest("/health", options);
+export const readyApi = (options) => apiRequest("/ready", options);
 
 export const authApi = {
   register: (payload) =>

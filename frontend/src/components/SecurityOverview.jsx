@@ -16,6 +16,7 @@ import {
   XAxis,
   YAxis,
 } from "recharts";
+import { BACKEND_STATES } from "../services/backendStatus.js";
 
 export default function SecurityOverview({
   apiStatus,
@@ -45,14 +46,18 @@ export default function SecurityOverview({
       : "No analysis results loaded";
 
   const connectionLabel =
-    apiStatus === "online"
+    apiStatus === BACKEND_STATES.ONLINE
       ? "Connected"
-      : apiStatus === "checking"
+      : apiStatus === BACKEND_STATES.CHECKING
         ? "Checking"
-        : "Unavailable";
+        : apiStatus === BACKEND_STATES.WAKING
+          ? "Waking"
+          : apiStatus === BACKEND_STATES.NOT_READY
+            ? "Not ready"
+            : "Unavailable";
 
   const serviceResponse =
-    health?.status || (apiStatus === "checking" ? "Checking…" : "Unavailable");
+    health?.status || (apiStatus === BACKEND_STATES.CHECKING ? "Checking…" : "Unavailable");
 
   return (
     <>
@@ -70,13 +75,25 @@ export default function SecurityOverview({
           label="API availability"
           value={connectionLabel}
           detail={
-            apiStatus === "online"
-              ? "Health endpoint responded"
-              : apiStatus === "checking"
+            apiStatus === BACKEND_STATES.ONLINE
+              ? "Health and readiness checks passed"
+              : apiStatus === BACKEND_STATES.CHECKING
                 ? "Health check in progress"
-                : "Based on the latest health check"
+                : apiStatus === BACKEND_STATES.WAKING
+                  ? "Waiting for bounded readiness retry"
+                  : apiStatus === BACKEND_STATES.NOT_READY
+                    ? "Health passed; readiness failed"
+                    : "Based on the latest health check"
           }
-          tone={apiStatus === "online" ? "green" : apiStatus === "offline" ? "red" : "blue"}
+          tone={
+            apiStatus === BACKEND_STATES.ONLINE
+              ? "green"
+              : apiStatus === BACKEND_STATES.OFFLINE
+                ? "red"
+                : apiStatus === BACKEND_STATES.NOT_READY
+                  ? "amber"
+                  : "blue"
+          }
         />
         <MetricCard
           icon={ShieldCheck}
