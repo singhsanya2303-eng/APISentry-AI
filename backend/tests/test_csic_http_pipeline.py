@@ -8,6 +8,7 @@ from __future__ import annotations
 
 import hashlib
 import json
+import zipfile
 
 import joblib
 import numpy as np
@@ -64,11 +65,18 @@ def make_records(sessions: int = 12, rows_per_session: int = 4) -> list[CsicReco
     return records
 
 
-def test_verify_dataset_hash_accepts_expected_archive():
-    from scripts.train_csic_http_classifier import DEFAULT_ARCHIVE, DEFAULT_HASH
+def test_verify_dataset_hash_accepts_expected_archive(tmp_path):
+    archive = tmp_path / "csic_sample.zip"
+    with zipfile.ZipFile(archive, "w") as zip_handle:
+        zip_handle.writestr(
+            "sample.csv",
+            "id,url,payload\n1,/tienda1/publico/anadir.jsp,id=2\n",
+        )
 
-    digest = verify_dataset_hash(DEFAULT_ARCHIVE, DEFAULT_HASH)
-    assert digest == DEFAULT_HASH
+    expected_hash = hashlib.sha256(archive.read_bytes()).hexdigest()
+
+    digest = verify_dataset_hash(archive, expected_hash)
+    assert digest == expected_hash
 
 
 def test_verify_dataset_hash_rejects_mismatch(tmp_path):
