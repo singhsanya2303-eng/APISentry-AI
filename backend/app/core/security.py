@@ -5,6 +5,7 @@ import hmac
 import json
 import logging
 import secrets
+import time
 from datetime import datetime, timedelta, timezone
 from types import SimpleNamespace
 from typing import Any, Dict, List, Optional, Sequence, Set
@@ -139,6 +140,61 @@ def _cleanup_revoked_tokens(now_ts: Optional[int] = None) -> None:
         _REVOKED_TOKENS.discard(h)
 
 
+# Expired rows are ignored by is_token_revoked(), so a throttled bounded delete
+# on the existing expires_at index is safe without a schema change or job.
+_DB_REVOCATION_CLEANUP_INTERVAL_SECONDS = 300
+_DB_REVOCATION_CLEANUP_BATCH_SIZE = 500
+_last_db_revocation_cleanup_monotonic = 0.0
+
+
+def cleanup_expired_revoked_tokens(
+    db: Session,
+    now_ts: Optional[int] = None,
+    *,
+    force: bool = False,
+) -> int:
+    """Delete a bounded set of expired revocation rows; never break auth on failure."""
+    global _last_db_revocation_cleanup_monotonic
+
+    current = time.monotonic()
+    if not force and current - _last_db_revocation_cleanup_monotonic < _DB_REVOCATION_CLEANUP_INTERVAL_SECONDS:
+        return 0
+
+    _last_db_revocation_cleanup_monotonic = current
+    cutoff_ts = int(datetime.now(timezone.utc).timestamp()) if now_ts is None else int(now_ts)
+    cutoff = datetime.fromtimestamp(cutoff_ts, tz=timezone.utc)
+
+    try:
+        from app.models.revoked_token import RevokedToken
+
+        expired_ids = [
+            row_id
+            for (row_id,) in (
+                db.query(RevokedToken.id)
+                .filter(RevokedToken.expires_at <= cutoff)
+                .order_by(RevokedToken.id)
+                .limit(_DB_REVOCATION_CLEANUP_BATCH_SIZE)
+                .all()
+            )
+        ]
+        if not expired_ids:
+            return 0
+        deleted = (
+            db.query(RevokedToken)
+            .filter(RevokedToken.id.in_(expired_ids))
+            .delete(synchronize_session=False)
+        )
+        db.commit()
+        return int(deleted or 0)
+    except Exception:
+        try:
+            db.rollback()
+        except Exception:
+            logger.debug("revocation cleanup rollback failed", exc_info=True)
+        logger.warning("expired revocation cleanup failed; continuing", exc_info=True)
+        return 0
+
+
 def _jwt_exp_unverified(token: str) -> int:
     """Best-effort exp extraction for revocation bookkeeping. No trust decision."""
     try:
@@ -179,8 +235,9 @@ def revoke_token(token: str, db: Optional[Session] = None) -> None:
     """Revoke a JWT token for logout/session invalidation.
 
     Stores SHA-256 hash + expiry in memory and, when possible, in the
-    revoked_tokens table for restart durability. DB failures fall back to
-    in-memory revocation so logout does not silently succeed without local effect.
+    revoked_tokens table for restart durability. Non-production DB failures
+    fall back to in-memory revocation so demos remain usable; production raises
+    HTTP 503 so logout never claims durable revocation it could not persist.
     """
     if not token or not isinstance(token, str):
         return
@@ -196,6 +253,14 @@ def revoke_token(token: str, db: Optional[Session] = None) -> None:
 
     if db is None:
         return
+
+    # Best-effort bounded cleanup runs only on logout, never on the hot auth
+    # read path. Failure must not affect the in-memory revocation just added.
+    try:
+        cleanup_expired_revoked_tokens(db, now_ts=now_ts)
+    except Exception:
+        logger.debug("expired revocation cleanup hook failed", exc_info=True)
+
     try:
         from app.models.revoked_token import RevokedToken
 
@@ -212,8 +277,19 @@ def revoke_token(token: str, db: Optional[Session] = None) -> None:
         else:
             # Keep earliest/known expiry; ensure row exists.
             db.commit()
-    except Exception:
+    except Exception as exc:
         db.rollback()
+        if settings.is_production:
+            # Never report a successful logout when the durable revocation row
+            # could not be written. The client clears its local token anyway.
+            logger.error(
+                "revoked token persistence failed in production; refusing to confirm logout",
+                exc_info=True,
+            )
+            raise HTTPException(
+                status_code=status.HTTP_503_SERVICE_UNAVAILABLE,
+                detail="Session revocation is temporarily unavailable",
+            ) from exc
         logger.warning("revoked token DB persistence failed; in-memory revocation remains active", exc_info=True)
 
 
@@ -263,6 +339,15 @@ def is_token_revoked(token: str, db: Optional[Session] = None) -> bool:
         except Exception:
             logger.debug("revoked token DB rollback failed after lookup error", exc_info=True)
         if _is_revocation_store_missing(exc):
+            if settings.is_production:
+                # Production requires durable revocation. A missing 0004 table
+                # must deny authenticated requests rather than accept a JWT
+                # whose logout was recorded only in one process's memory.
+                logger.error(
+                    "revoked token store unavailable in production; failing closed",
+                    exc_info=True,
+                )
+                return True
             # Migration 0004/file-only revocation store not deployed. Fall back to
             # in-memory revocation state for demo/local compatibility, but do not
             # claim durable or multi-worker revocation guarantees.

@@ -15,22 +15,38 @@ from app.services.traffic_service import save_traffic_log
 
 logger = logging.getLogger("apisentry.middleware")
 
-# Sensitive parameter keys to mask (case-insensitive)
+# Known sensitive parameter keys plus substring markers. Markers cover
+# noncanonical spellings such as authToken, access-token, and session_id that
+# would otherwise be written verbatim to logs and api_traffic_logs.query_params.
 SENSITIVE_PARAM_KEYS = {
     "password", "pass", "pwd", "token", "access_token", "refresh_token",
     "secret", "api_key", "apikey", "key", "auth", "authorization",
     "credential", "private", "ssn", "credit_card"
 }
+_SENSITIVE_PARAM_MARKERS = (
+    "password", "passwd", "pwd", "token", "secret", "api_key", "apikey",
+    "authorization", "auth", "credential", "cookie", "session", "private",
+    "key", "ssn", "credit_card", "creditcard",
+)
+
+
+def _is_sensitive_param_key(key: Any) -> bool:
+    """Normalize a key and mask exact matches or any sensitive marker."""
+    normalized = str(key).strip().lower().replace("-", "_")
+    if normalized in SENSITIVE_PARAM_KEYS:
+        return True
+    return any(marker in normalized for marker in _SENSITIVE_PARAM_MARKERS)
 
 
 def sanitize_query_params(query_params: Dict[str, Any]) -> Dict[str, Any]:
-    """Sanitize query parameters by masking sensitive values."""
+    """Sanitize query parameters by masking sensitive values.
+
+    Both application logs and persisted traffic rows use this result, so it
+    must fail safe for noncanonical credential-like key names.
+    """
     sanitized = {}
     for key, value in query_params.items():
-        if key.lower() in SENSITIVE_PARAM_KEYS:
-            sanitized[key] = "***MASKED***"
-        else:
-            sanitized[key] = value
+        sanitized[key] = "***MASKED***" if _is_sensitive_param_key(key) else value
     return sanitized
 
 
@@ -298,14 +314,14 @@ class SecurityHeadersMiddleware(BaseHTTPMiddleware):
                 "connect-src 'self' https:; object-src 'none'; base-uri 'self'; form-action 'self'; frame-ancestors 'none'"
             )
         else:
-            connect_src = "'self' https:" if str(getattr(settings, "ENVIRONMENT", "")).strip().lower() == "production" else "'self' http: https:"
+            connect_src = "'self' https:" if bool(getattr(settings, "is_production", False)) else "'self' http: https:"
             csp = (
                 "default-src 'self'; img-src 'self' data:; "
                 "style-src 'self' 'unsafe-inline'; script-src 'self'; "
                 f"connect-src {connect_src}; object-src 'none'; base-uri 'self'; form-action 'self'; frame-ancestors 'none'"
             )
         response.headers.setdefault("Content-Security-Policy", csp)
-        if str(getattr(settings, "ENVIRONMENT", "")).strip().lower() == "production":
+        if bool(getattr(settings, "is_production", False)):
             response.headers.setdefault("Strict-Transport-Security", "max-age=31536000; includeSubDomains")
         return response
 

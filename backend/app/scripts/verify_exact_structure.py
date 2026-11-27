@@ -47,6 +47,7 @@ from app.models import (
     MitigationPolicy,
     MitigationPolicyActivationEvent,
     MitigationPolicyState,
+    RevokedToken,
     User,
 )
 from app.scripts import verify_baseline
@@ -547,6 +548,7 @@ def expected_structure(mode: str) -> ExpectedStructure:
             MitigationPolicyActivationEvent.__table__,
             MitigationDecision.__table__,
             MitigationAuditEvent.__table__,
+            RevokedToken.__table__,
         )
         revision = _final_revision()
 
@@ -1078,6 +1080,7 @@ def _model_tables_by_name():
         MitigationPolicyActivationEvent.__table__,
         MitigationDecision.__table__,
         MitigationAuditEvent.__table__,
+        RevokedToken.__table__,
     )
     return {table.name: table for table in tables}
 

@@ -22,11 +22,15 @@ def test_lifespan_triggers_init_db_without_connecting(monkeypatch):
     safely isolated from PostgreSQL using monkeypatch.
     """
     mock_init_db = MagicMock()
+    mock_cleanup = MagicMock()
     monkeypatch.setattr("app.main.init_db", mock_init_db)
+    monkeypatch.setattr("app.main.cleanup_expired_revoked_tokens", mock_cleanup)
     _set_schema_gate(monkeypatch)
 
     with TestClient(app) as client:
         mock_init_db.assert_called_once()
+        mock_cleanup.assert_called_once()
+        assert mock_cleanup.call_args.kwargs.get("force") is True
         response = client.get("/health")
         assert response.status_code == 200
         assert response.json()["status"] == "healthy"
@@ -40,6 +44,22 @@ def test_lifespan_skips_init_db_when_auto_create_disabled(monkeypatch):
     with TestClient(app) as client:
         mock_init_db.assert_not_called()
         assert client.get("/health").status_code == 200
+
+
+def test_lifespan_survives_revocation_cleanup_failure(monkeypatch):
+    """Startup cleanup is best-effort and must not break liveness."""
+
+    def _raise(*args, **kwargs):
+        raise RuntimeError("cleanup unavailable")
+
+    monkeypatch.setattr("app.main.cleanup_expired_revoked_tokens", _raise)
+    mock_init_db = MagicMock()
+    monkeypatch.setattr("app.main.init_db", mock_init_db)
+    _set_schema_gate(monkeypatch)
+
+    with TestClient(app) as client:
+        assert client.get("/health").status_code == 200
+        mock_init_db.assert_called_once()
 
 
 def test_production_startup_never_calls_init_db(monkeypatch):
@@ -86,7 +106,11 @@ def test_production_settings_force_auto_create_schema_off():
     configured = Settings(
         ENVIRONMENT=" production ",
         JWT_SECRET_KEY=secrets.token_urlsafe(32),
+        CORS_ORIGINS=["https://app.example.test"],
+        DATABASE_URL="postgresql://app_user:not-a-real-secret@db.example.test:5432/app_db",
+        APISENTRY_ENABLE_PUBLIC_REGISTRATION=False,
         AUTO_CREATE_SCHEMA=True,
+        _env_file=None,
     )
 
     assert configured.ENVIRONMENT == "production"

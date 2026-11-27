@@ -54,6 +54,9 @@ def test_config_gate_is_explicit_and_never_enabled_in_production(monkeypatch) ->
     production = Settings(
         ENVIRONMENT="production",
         JWT_SECRET_KEY=secrets.token_urlsafe(32),
+        CORS_ORIGINS=["https://app.example.test"],
+        DATABASE_URL="postgresql://app_user:not-a-real-secret@db.example.test:5432/app_db",
+        APISENTRY_ENABLE_PUBLIC_REGISTRATION=False,
         APISENTRY_ENABLE_DEMO_CONTROL_PLANE=True,
         _env_file=None,
     )

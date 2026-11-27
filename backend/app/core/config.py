@@ -7,10 +7,32 @@ from urllib.parse import urlparse
 
 from pydantic import field_validator, model_validator
 from pydantic_settings import BaseSettings, SettingsConfigDict
+from sqlalchemy.engine import URL, make_url
 
 # Encoded production secrets must represent at least 256 bits; format checks
 # cannot prove randomness, so obvious repeated and sequential values are rejected.
 _MIN_JWT_SECRET_BYTES = 32
+
+# ENVIRONMENT is intentionally allowlisted. Production aliases such as `prod`
+# must be rejected instead of silently behaving like development.
+_ALLOWED_ENVIRONMENTS = frozenset(
+    {"development", "dev", "local", "test", "testing", "staging", "production"}
+)
+
+# Public registration is a deliberate opt-in and never enabled in production.
+_REGISTRATION_FLAG = "APISENTRY_ENABLE_PUBLIC_REGISTRATION"
+
+# Placeholder markers reject copied template values without echoing them in errors.
+_PLACEHOLDER_SECRET_MARKERS = (
+    "replace_with",
+    "change_me",
+    "changeme",
+    "placeholder",
+    "your_",
+    "local-development-only",
+    "<",
+    ">",
+)
 
 
 class Settings(BaseSettings):
@@ -53,6 +75,11 @@ class Settings(BaseSettings):
 
     # Startup schema creation gate. Production always forces this to False.
     AUTO_CREATE_SCHEMA: bool = True
+
+    # Public self-registration is disabled by default and can never be enabled
+    # in production. Owner-controlled provisioning remains available through
+    # the trusted service/database path, not an unauthenticated HTTP bootstrap.
+    APISENTRY_ENABLE_PUBLIC_REGISTRATION: bool = False
 
     # Demo Authentication Feature Flag (Strictly disabled by default, never enabled in production)
     APISENTRY_ENABLE_DEMO_AUTH: bool = False
@@ -111,7 +138,18 @@ class Settings(BaseSettings):
     @field_validator("ENVIRONMENT", mode="before")
     @classmethod
     def normalize_environment(cls, value: Any) -> str:
-        return str(value).strip().lower()
+        normalized = str(value).strip().lower()
+        if normalized != "production" and (
+            "prod" in normalized or normalized in {"prd", "live"}
+        ):
+            raise ValueError(
+                "ENVIRONMENT is ambiguous; use the exact value 'production' for production deployments"
+            )
+        if normalized not in _ALLOWED_ENVIRONMENTS:
+            raise ValueError(
+                "ENVIRONMENT must be one of: development, dev, local, test, testing, staging, production"
+            )
+        return normalized
 
     @field_validator("MAX_REQUEST_BODY_BYTES")
     @classmethod
@@ -158,8 +196,15 @@ class Settings(BaseSettings):
         )
 
     @classmethod
+    def _is_placeholder_secret(cls, secret: str) -> bool:
+        lowered = secret.strip().lower()
+        return any(marker in lowered for marker in _PLACEHOLDER_SECRET_MARKERS)
+
+    @classmethod
     def _meets_jwt_secret_requirements(cls, secret: str) -> bool:
         if cls._is_obviously_predictable_secret(secret):
+            return False
+        if cls._is_placeholder_secret(secret):
             return False
 
         if len(secret) == 64 and re.fullmatch(r"[0-9a-fA-F]{64}", secret):
@@ -178,6 +223,33 @@ class Settings(BaseSettings):
 
         return False
 
+    def _production_database_target_configured(self) -> bool:
+        """True only for an explicit PostgreSQL DSN or full PostgreSQL target."""
+        if self.DATABASE_URL and self.DATABASE_URL.strip():
+            try:
+                parsed = make_url(self.DATABASE_URL)
+            except Exception:
+                return False
+            if parsed.get_backend_name() not in {
+                "postgresql",
+                "postgresql+psycopg2",
+                "postgresql+psycopg",
+            }:
+                return False
+            return bool(parsed.host and parsed.database)
+        required_fields = (
+            "POSTGRES_SERVER",
+            "POSTGRES_PORT",
+            "POSTGRES_USER",
+            "POSTGRES_PASSWORD",
+            "POSTGRES_DB",
+        )
+        return all(
+            field in self.model_fields_set
+            and str(getattr(self, field)).strip()
+            for field in required_fields
+        )
+
     @model_validator(mode="after")
     def validate_security_configuration(self) -> "Settings":
         normalized_origins: List[str] = []
@@ -193,9 +265,54 @@ class Settings(BaseSettings):
             normalized_origins.append(o.rstrip("/"))
         self.CORS_ORIGINS = normalized_origins
 
-        if self.ENVIRONMENT == "production":
-            # Production schema changes must be explicit, reviewed Alembic operations.
+        if self.is_production:
+            # Production must fail closed on every deployment-shaping setting.
+            self.DEBUG = False
             self.AUTO_CREATE_SCHEMA = False
+            self.APISENTRY_ENABLE_DEMO_AUTH = False
+            self.APISENTRY_ENABLE_DEMO_CONTROL_PLANE = False
+
+            if _REGISTRATION_FLAG not in self.model_fields_set:
+                raise ValueError(
+                    "APISENTRY_ENABLE_PUBLIC_REGISTRATION must be explicitly set to false in production"
+                )
+            if self.APISENTRY_ENABLE_PUBLIC_REGISTRATION:
+                raise ValueError(
+                    "APISENTRY_ENABLE_PUBLIC_REGISTRATION cannot be enabled in production"
+                )
+            self.APISENTRY_ENABLE_PUBLIC_REGISTRATION = False
+            if not self.CORS_ORIGINS:
+                raise ValueError("CORS_ORIGINS must contain explicit trusted origins in production")
+            for origin in self.CORS_ORIGINS:
+                parsed = urlparse(origin)
+                if parsed.scheme != "https" and parsed.hostname not in {"localhost", "127.0.0.1"}:
+                    raise ValueError(
+                        "CORS_ORIGINS must use https in production except for loopback development origins"
+                    )
+            if not self._production_database_target_configured():
+                raise ValueError(
+                    "Production requires an explicit DATABASE_URL with a PostgreSQL scheme, "
+                    "host and database, or all POSTGRES_SERVER, POSTGRES_PORT, POSTGRES_USER, "
+                    "POSTGRES_PASSWORD and POSTGRES_DB values"
+                )
+
+            database_password = None
+            if self.DATABASE_URL and self.DATABASE_URL.strip():
+                try:
+                    database_password = make_url(self.DATABASE_URL).password
+                except Exception:
+                    database_password = None
+            else:
+                database_password = self.POSTGRES_PASSWORD
+            if database_password and self._is_placeholder_secret(database_password):
+                raise ValueError(
+                    "Production database credentials must not be template placeholder values"
+                )
+            if self.API_KEY.strip() and self._is_placeholder_secret(self.API_KEY.strip()):
+                raise ValueError(
+                    "API_KEY must be a generated service key or empty in production"
+                )
+
             secret = self.JWT_SECRET_KEY.strip()
             if (
                 not secret
@@ -203,7 +320,8 @@ class Settings(BaseSettings):
                 or not self._meets_jwt_secret_requirements(secret)
             ):
                 raise ValueError(
-                    "JWT_SECRET_KEY must encode at least 256 bits and not be obviously predictable in production"
+                    "JWT_SECRET_KEY must encode at least 256 bits and not be an insecure "
+                    "default or obviously predictable value in production"
                 )
         return self
 
@@ -211,25 +329,40 @@ class Settings(BaseSettings):
         if self.DATABASE_URL:
             return self.DATABASE_URL
 
-        return (
-            f"postgresql://{self.POSTGRES_USER}:"
-            f"{self.POSTGRES_PASSWORD}@"
-            f"{self.POSTGRES_SERVER}:"
-            f"{self.POSTGRES_PORT}/"
-            f"{self.POSTGRES_DB}"
-        )
+        # URL.create escapes reserved characters in managed-PG credentials.
+        # The returned string is used only for engine creation; it is never logged.
+        return URL.create(
+            "postgresql",
+            username=self.POSTGRES_USER,
+            password=self.POSTGRES_PASSWORD,
+            host=self.POSTGRES_SERVER,
+            port=self.POSTGRES_PORT,
+            database=self.POSTGRES_DB,
+        ).render_as_string(hide_password=False)
+
+    @property
+    def is_production(self) -> bool:
+        """Exact production token after normalization, used by all safety gates."""
+        return str(self.ENVIRONMENT).strip().lower() == "production"
+
+    @property
+    def is_public_registration_enabled(self) -> bool:
+        """Public registration is opt-in only and impossible in production."""
+        if self.is_production:
+            return False
+        return bool(self.APISENTRY_ENABLE_PUBLIC_REGISTRATION)
 
     @property
     def is_demo_auth_enabled(self) -> bool:
         """Demo authentication endpoint is strictly disabled by default and never allowed in production."""
-        if self.ENVIRONMENT == "production":
+        if self.is_production:
             return False
         return bool(self.APISENTRY_ENABLE_DEMO_AUTH and self.DEMO_PASSWORD)
 
     @property
     def is_demo_control_plane_enabled(self) -> bool:
         """Gate E / WP9 demo routers require explicit non-production opt-in."""
-        if self.ENVIRONMENT == "production":
+        if self.is_production:
             return False
         return bool(self.APISENTRY_ENABLE_DEMO_CONTROL_PLANE)
 
@@ -239,6 +372,7 @@ class Settings(BaseSettings):
             "environment": self.ENVIRONMENT,
             "debug": bool(self.DEBUG),
             "auto_create_schema": bool(self.AUTO_CREATE_SCHEMA),
+            "public_registration_enabled": self.is_public_registration_enabled,
             "cors_origin_count": len(self.CORS_ORIGINS),
             "max_request_body_bytes": int(self.MAX_REQUEST_BODY_BYTES),
             "auth_rate_limit_enabled": bool(self.AUTH_RATE_LIMIT_ENABLED),

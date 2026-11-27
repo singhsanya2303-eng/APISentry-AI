@@ -44,6 +44,7 @@ router = APIRouter(prefix="/auth", tags=["User Authentication"])
     responses={
         201: {"description": "User successfully registered"},
         400: {"description": "Invalid registration payload"},
+        403: {"description": "Public registration is disabled"},
         409: {"description": "Email or username already registered"},
     },
 )
@@ -53,14 +54,25 @@ def register(
     db: Session = Depends(get_db),
 ) -> UserResponse:
     """
-    Register a new public user with normalized unique email, username, and
-    bcrypt-hashed password.
+    Register a new user only when public registration is explicitly enabled.
 
-    Public self-registration is always provisioned as a viewer account. Any
-    client-supplied role value is ignored by the trusted backend registration
-    path and never persisted.
+    Registration is disabled by default and always disabled in production. When
+    enabled in a non-production environment, accounts are provisioned as
+    viewers; client-supplied role values are ignored and never persisted.
     """
     enforce_auth_rate_limit(request, "auth.register")
+    if not settings.is_public_registration_enabled:
+        log_security_event(
+            "auth.registration_disabled",
+            severity="warning",
+            path=str(request.url.path),
+            method=request.method,
+        )
+        raise HTTPException(
+            status_code=status.HTTP_403_FORBIDDEN,
+            detail="Public registration is disabled",
+        )
+
     hashed = hash_password(payload.password)
 
     try:
