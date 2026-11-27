@@ -20,7 +20,7 @@ from app.db.base import Base
 from app.db.session import get_db
 from app.main import app
 from app.models.traffic import APITrafficLog
-from app.schemas.bola import DetectionVerdict
+from app.schemas.bola import BolaDetectionResult, DetectionVerdict
 from app.services.bola_analysis_service import analyze_traffic_for_bola
 
 client = TestClient(app)
@@ -318,9 +318,30 @@ def test_api_key_compatibility_rejects_missing_api_key(monkeypatch):
 def test_api_key_compatibility_accepts_valid_api_key(monkeypatch):
     """Verify that protected security analysis routes accept correct X-API-Key."""
     monkeypatch.setattr(settings, "API_KEY", "system-test-key-999")
+
+    mock_analyze = MagicMock(
+        return_value=BolaDetectionResult(
+            verdict=DetectionVerdict.NO_SUSPICIOUS_BEHAVIOR,
+            evidences=[],
+            analyzed_event_count=0,
+            explanation="Authentication-only test; BOLA analysis is mocked.",
+        )
+    )
+    monkeypatch.setattr(
+        "app.api.v1.routes.bola.analyze_traffic_for_bola",
+        mock_analyze,
+    )
+
+    mock_persist = MagicMock(return_value=True)
+    monkeypatch.setattr(
+        "app.utils.middleware.save_traffic_log",
+        mock_persist,
+    )
+
     response = client.get(
         "/api/v1/security/bola/analyze",
         headers={"X-API-Key": "system-test-key-999"},
     )
     assert response.status_code == 200
+    assert mock_analyze.called
     assert response.json()["verdict"] in ("no_suspicious_behavior", "insufficient_evidence", "suspicious_bola_candidate")
