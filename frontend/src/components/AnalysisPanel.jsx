@@ -1,13 +1,11 @@
-import { useMemo, useState } from "react";
+import { useEffect, useMemo, useState } from "react";
 import {
   Activity, AlertTriangle, CheckCircle2, CircleHelp, Code2,
   Fingerprint, Gauge, LoaderCircle, LockKeyhole, Play, RotateCcw,
   ShieldAlert, ShieldCheck, Sparkles, Network, Clock3, Braces,
 } from "lucide-react";
+import { API_BASE, securityApis } from "../services/api";
 import "./AnalysisPanel.css";
-
-const API_BASE = import.meta.env.VITE_API_BASE_URL || "http://127.0.0.1:8000";
-const API_KEY = import.meta.env.VITE_APISENTRY_API_KEY || "";
 
 const MODULES = {
   Clustering: { path: "/api/v1/security/clustering/analyze", method: "POST", description: "Compare traffic behavior and surface outlier patterns.", hint: "Use numeric feature rows with matching dimensions.", icon: Network },
@@ -19,8 +17,8 @@ const MODULES = {
   "Rate Anomaly": { path: "/api/v1/security/rate-anomaly/analyze", method: "GET", description: "Look for unusually high request-rate behavior.", hint: "Uses the backend's current default analysis filters.", icon: Gauge },
 };
 
-const DEFAULT_FEATURES = { requests_per_minute: 10, unique_ips: 2, failed_requests_ratio: 0.1, token_reuse_count: 1, geo_distance_km: 0 };
-const DEFAULT_VECTORS = [[10, 2], [12, 2], [11, 3], [100, 20], [9, 2]];
+const DEFAULT_FEATURES = {};
+const DEFAULT_VECTORS = [[10, 2], [12, 2], [11, 3], [9, 2], [10, 3]];
 const prettyJson = (value) => JSON.stringify(value, null, 2);
 const localInput = (date) => new Date(date.getTime() - date.getTimezoneOffset() * 60000).toISOString().slice(0, 16);
 
@@ -34,6 +32,11 @@ function defaultWindows() {
 
 export default function AnalysisPanel({ moduleName, onResult }) {
   const module = MODULES[moduleName];
+  const isTrafficTrend = moduleName === "Traffic Trend";
+  const isTokenClassifier = moduleName === "Token Classification";
+  const isClustering = moduleName === "Clustering";
+  const isSimpleGet = module?.method === "GET" && !isTrafficTrend;
+
   const [loading, setLoading] = useState(false);
   const [error, setError] = useState("");
   const [result, setResult] = useState(null);
@@ -45,11 +48,33 @@ export default function AnalysisPanel({ moduleName, onResult }) {
   const [contamination, setContamination] = useState(0.1);
   const [showRequest, setShowRequest] = useState(false);
   const [showRaw, setShowRaw] = useState(false);
+  const [featureMetadataError, setFeatureMetadataError] = useState("");
 
-  const isTrafficTrend = moduleName === "Traffic Trend";
-  const isTokenClassifier = moduleName === "Token Classification";
-  const isClustering = moduleName === "Clustering";
-  const isSimpleGet = module?.method === "GET" && !isTrafficTrend;
+  useEffect(() => {
+    if (!isTokenClassifier) return undefined;
+
+    let active = true;
+    securityApis.tokenClassifierFeatures()
+      .then((metadata) => {
+        if (active && Array.isArray(metadata.feature_names)) {
+          setFeaturesText(prettyJson(
+            Object.fromEntries(metadata.feature_names.map((name) => [name, 0]))
+          ));
+        }
+      })
+      .catch((metadataError) => {
+        if (active) {
+          setFeatureMetadataError(
+            metadataError instanceof Error
+              ? metadataError.message
+              : "Model feature metadata is unavailable."
+          );
+        }
+      });
+
+    return () => { active = false; };
+  }, [isTokenClassifier]);
+
   const requestPreview = useMemo(() => {
     if (!module) return "";
     if (isTokenClassifier) return prettyJson({ features: parseOrFallback(featuresText, DEFAULT_FEATURES) });
@@ -63,51 +88,76 @@ export default function AnalysisPanel({ moduleName, onResult }) {
   const updateWindow = (key, value) => setWindows((previous) => ({ ...previous, [key]: value }));
 
   async function runAnalysis(event) {
-    event.preventDefault(); setLoading(true); setError(""); setResult(null); setShowRaw(false);
+    event.preventDefault();
+    setLoading(true);
+    setError("");
+    setResult(null);
+    setShowRaw(false);
     try {
-      const headers = { Accept: "application/json", ...(API_KEY ? { "X-API-Key": API_KEY } : {}) };
-      let url = `${API_BASE}${module.path}`;
-      const options = { method: module.method, headers };
+      let params;
+      let body;
       if (isTrafficTrend) {
         const dates = [windows.baselineStart, windows.baselineEnd, windows.targetStart, windows.targetEnd].map((v) => new Date(v));
         if (dates.some((date) => Number.isNaN(date.getTime()))) throw new Error("Enter valid dates for every traffic window.");
         if (!(dates[0] < dates[1] && dates[1] < dates[2] && dates[2] < dates[3])) throw new Error("Date order must be: baseline start < baseline end < target start < target end.");
-        if (!(Number(thresholdPercentile) >= 1 && Number(thresholdPercentile) <= 100)) throw new Error("Threshold percentile must be between 1 and 100.");
-        url += `?${new URLSearchParams({ baseline_start: dates[0].toISOString(), baseline_end: dates[1].toISOString(), target_start: dates[2].toISOString(), target_end: dates[3].toISOString(), threshold_percentile: String(Number(thresholdPercentile)) })}`;
+        if (!(Number(thresholdPercentile) >= 50.0 && Number(thresholdPercentile) <= 99.9)) throw new Error("Threshold percentile must be between 50.0 and 99.9.");
+        params = {
+          baseline_start: dates[0].toISOString(),
+          baseline_end: dates[1].toISOString(),
+          target_start: dates[2].toISOString(),
+          target_end: dates[3].toISOString(),
+          threshold_percentile: Number(thresholdPercentile),
+        };
       } else if (isTokenClassifier) {
         let features;
         try { features = JSON.parse(featuresText); } catch { throw new Error("Features must be valid JSON."); }
         if (!features || Array.isArray(features) || typeof features !== "object") throw new Error("Features must be a JSON object.");
         if (Object.values(features).some((v) => typeof v !== "number" || !Number.isFinite(v))) throw new Error("Every feature value must be a finite number.");
-        headers["Content-Type"] = "application/json"; options.body = JSON.stringify({ features });
+        body = { features };
       } else if (isClustering) {
         let featureVectors;
         try { featureVectors = JSON.parse(vectorsText); } catch { throw new Error("Feature vectors must be valid JSON."); }
         if (!Array.isArray(featureVectors) || featureVectors.length < 3 || !featureVectors.every((row) => Array.isArray(row) && row.length > 0 && row.every((v) => typeof v === "number" && Number.isFinite(v)))) throw new Error("Enter at least three rows of numeric feature vectors.");
         if (!featureVectors.every((row) => row.length === featureVectors[0].length)) throw new Error("Every feature vector must have the same number of values.");
-        if (!(Number(contamination) > 0 && Number(contamination) <= 0.5)) throw new Error("Contamination must be greater than 0 and at most 0.5.");
-        headers["Content-Type"] = "application/json"; options.body = JSON.stringify({ feature_vectors: featureVectors, contamination: Number(contamination), random_state: 42 });
+        if (!(Number(contamination) > 0 && Number(contamination) < 0.5)) throw new Error("Contamination must be greater than 0 and less than 0.5.");
+        body = { feature_vectors: featureVectors, contamination: Number(contamination), random_state: 42 };
       }
-      const response = await fetch(url, options);
-      const responseText = await response.text();
-      let data;
-      try { data = responseText ? JSON.parse(responseText) : {}; } catch { data = { detail: responseText || "Empty server response" }; }
-      if (!response.ok) {
-        const detail = typeof data?.detail === "string" ? data.detail : Array.isArray(data?.detail) ? data.detail.map((item) => item.msg || JSON.stringify(item)).join("; ") : data?.message || `Request failed with HTTP ${response.status}`;
-        throw new Error(detail);
-      }
-      setResult(data); setLastRun(new Date()); onResult?.(moduleName, data);
-    } catch (runError) { setError(runError instanceof Error ? runError.message : "Unexpected error while running analysis."); }
-    finally { setLoading(false); }
+      const data = isTokenClassifier
+        ? await securityApis.tokenClassifier(body)
+        : isClustering
+          ? await securityApis.clustering(body)
+          : isTrafficTrend
+            ? await securityApis.trafficTrends(params)
+            : await securityApis[moduleName === "Behavioral Risk" ? "behavior" : moduleName === "BOLA Detection" ? "bola" : moduleName === "Brute-Force" ? "bruteForce" : "rateAnomaly"](params);
+      setResult(data);
+      setLastRun(new Date());
+      onResult?.(moduleName, data);
+    } catch (runError) {
+      setError(runError instanceof Error ? runError.message : "Unexpected error while running analysis.");
+    } finally {
+      setLoading(false);
+    }
   }
 
   function resetForm() {
-    setError(""); setResult(null); setLastRun(null); setWindows(defaultWindows()); setThresholdPercentile(95);
-    setFeaturesText(prettyJson(DEFAULT_FEATURES)); setVectorsText(prettyJson(DEFAULT_VECTORS)); setContamination(0.1); setShowRaw(false);
+    setError("");
+    setResult(null);
+    setLastRun(null);
+    setWindows(defaultWindows());
+    setThresholdPercentile(95);
+    setFeaturesText(prettyJson(DEFAULT_FEATURES));
+    setVectorsText(prettyJson(DEFAULT_VECTORS));
+    setContamination(0.1);
+    setShowRaw(false);
   }
 
   const summaryItems = result ? getSummaryItems(result) : [];
-  const anomalyCount = result && typeof result.anomaly_count === "number" ? result.anomaly_count : null;
+  const anomalyCount =
+    result && typeof result.anomaly_count === "number"
+      ? result.anomaly_count
+      : typeof result?.kmeans?.anomaly_count === "number"
+        ? result.kmeans.anomaly_count
+        : null;
   const hasFindings = result && [result.findings, result.alerts, result.incidents, result.anomalies, result.results, result.evidences].some((v) => Array.isArray(v) && v.length > 0);
 
   return (
@@ -125,12 +175,12 @@ export default function AnalysisPanel({ moduleName, onResult }) {
 
           {isClustering && <>
             <div className="av-field-block"><div className="av-label-row"><label htmlFor="av-vectors">Feature vectors</label><span className="av-mini-tag">JSON ARRAY</span></div><p className="av-field-help">Each row represents one observation. All rows must have the same dimensions.</p><textarea id="av-vectors" className="av-code-input" value={vectorsText} onChange={(e) => setVectorsText(e.target.value)} rows={7} spellCheck="false" /></div>
-            <div className="av-field-block av-contamination"><div className="av-label-row"><label htmlFor="av-contamination">Expected outlier ratio</label><strong>{Math.round(Number(contamination) * 100)}%</strong></div><input id="av-contamination" type="range" min="0.01" max="0.5" step="0.01" value={contamination} onChange={(e) => setContamination(e.target.value)} /><div className="av-range-labels"><span>1% · Fewer outliers</span><span>50% · More outliers</span></div></div>
+            <div className="av-field-block av-contamination"><div className="av-label-row"><label htmlFor="av-contamination">Expected outlier ratio</label><strong>{Math.round(Number(contamination) * 100)}%</strong></div><input id="av-contamination" type="range" min="0.01" max="0.49" step="0.01" value={contamination} onChange={(e) => setContamination(e.target.value)} /><div className="av-range-labels"><span>1% · Fewer outliers</span><span>49% · More outliers</span></div></div>
           </>}
 
-          {isTokenClassifier && <div className="av-field-block"><div className="av-label-row"><label htmlFor="av-features">Token behavior features</label><span className="av-mini-tag">JSON OBJECT</span></div><p className="av-field-help">Edit the numeric signals sent to the trained classifier.</p><textarea id="av-features" className="av-code-input" value={featuresText} onChange={(e) => setFeaturesText(e.target.value)} rows={8} spellCheck="false" /><div className="av-helper-chips"><span>requests/min</span><span>unique IPs</span><span>failed ratio</span><span>token reuse</span></div></div>}
+          {isTokenClassifier && <div className="av-field-block"><div className="av-label-row"><label htmlFor="av-features">Token behavior features</label><span className="av-mini-tag">JSON OBJECT</span></div><p className="av-field-help">Feature names are loaded from the saved model. Values must be finite numbers.</p>{featureMetadataError && <p className="av-field-help">{featureMetadataError}</p>}<textarea id="av-features" className="av-code-input" value={featuresText} onChange={(e) => setFeaturesText(e.target.value)} rows={8} spellCheck="false" /></div>}
 
-          {isTrafficTrend && <><div className="av-window-note"><Activity size={17} /><div><strong>Compare two traffic periods</strong><span>Choose a clean baseline, then the period you want to inspect.</span></div></div><div className="av-period-label"><span className="av-period-dot baseline" /> Baseline period <span className="av-period-caption">Known / reference traffic</span></div><div className="av-date-grid"><label>Start<input type="datetime-local" value={windows.baselineStart} onChange={(e) => updateWindow("baselineStart", e.target.value)} required /></label><label>End<input type="datetime-local" value={windows.baselineEnd} onChange={(e) => updateWindow("baselineEnd", e.target.value)} required /></label></div><div className="av-period-label"><span className="av-period-dot target" /> Target period <span className="av-period-caption">Traffic under review</span></div><div className="av-date-grid"><label>Start<input type="datetime-local" value={windows.targetStart} onChange={(e) => updateWindow("targetStart", e.target.value)} required /></label><label>End<input type="datetime-local" value={windows.targetEnd} onChange={(e) => updateWindow("targetEnd", e.target.value)} required /></label></div><div className="av-field-block av-threshold"><div className="av-label-row"><label htmlFor="av-threshold">Anomaly threshold percentile</label><strong>{thresholdPercentile}th</strong></div><input id="av-threshold" type="range" min="70" max="99" step="1" value={thresholdPercentile} onChange={(e) => setThresholdPercentile(e.target.value)} /><div className="av-range-labels"><span>70 · Sensitive</span><span>99 · Strict</span></div></div></>}
+          {isTrafficTrend && <><div className="av-window-note"><Activity size={17} /><div><strong>Compare two traffic periods</strong><span>Choose a clean baseline, then the period you want to inspect.</span></div></div><div className="av-period-label"><span className="av-period-dot baseline" /> Baseline period <span className="av-period-caption">Known / reference traffic</span></div><div className="av-date-grid"><label>Start<input type="datetime-local" value={windows.baselineStart} onChange={(e) => updateWindow("baselineStart", e.target.value)} required /></label><label>End<input type="datetime-local" value={windows.baselineEnd} onChange={(e) => updateWindow("baselineEnd", e.target.value)} required /></label></div><div className="av-period-label"><span className="av-period-dot target" /> Target period <span className="av-period-caption">Traffic under review</span></div><div className="av-date-grid"><label>Start<input type="datetime-local" value={windows.targetStart} onChange={(e) => updateWindow("targetStart", e.target.value)} required /></label><label>End<input type="datetime-local" value={windows.targetEnd} onChange={(e) => updateWindow("targetEnd", e.target.value)} required /></label></div><div className="av-field-block av-threshold"><div className="av-label-row"><label htmlFor="av-threshold">Anomaly threshold percentile</label><strong>{thresholdPercentile}th</strong></div><input id="av-threshold" type="range" min="50" max="99" step="1" value={thresholdPercentile} onChange={(e) => setThresholdPercentile(e.target.value)} /><div className="av-range-labels"><span>50 · Sensitive</span><span>99 · Strict</span></div></div></>}
 
           {isSimpleGet && <div className="av-default-card"><div className="av-default-icon"><ShieldCheck size={19} /></div><div><strong>Default detector settings</strong><p>{module.hint}</p><span>GET · No request body</span></div></div>}
 
@@ -144,7 +194,7 @@ export default function AnalysisPanel({ moduleName, onResult }) {
           {loading ? <div className="av-output-empty av-loading-state"><LoaderCircle className="av-spin" size={29} /><strong>Analyzing request</strong><p>Waiting for the detector response from your backend.</p><div className="av-loading-track"><span /></div></div> : result ? <>
             <div className="av-result-summary"><div className="av-summary-top"><div className="av-summary-mark"><CheckCircle2 size={19} /></div><div><strong>Response received</strong><span>HTTP request completed successfully</span></div></div>
               {summaryItems.length ? <div className="av-summary-grid">{summaryItems.map((item) => <div className="av-summary-item" key={item.label}><span>{item.label}</span><strong>{String(item.value)}</strong></div>)}</div> : <div className="av-response-note"><Activity size={16} /><span>Response data received. Expand the raw response below to inspect all fields.</span></div>}
-              {result.summary && <div className="av-findings-hint" style={{ marginTop: "0.5rem" }}><ShieldAlert size={14} /> {result.summary}</div>}
+              {(result.summary || result.explanation) && <div className="av-findings-hint" style={{ marginTop: "0.5rem" }}><ShieldAlert size={14} /> {result.summary || result.explanation}</div>}
               {anomalyCount !== null && <div className={`av-finding-banner ${anomalyCount > 0 ? "warning" : "clear"}`}><span className="av-finding-icon">{anomalyCount > 0 ? <AlertTriangle size={17} /> : <CheckCircle2 size={17} />}</span><div><strong>{anomalyCount > 0 ? `${anomalyCount} anomal${anomalyCount === 1 ? "y" : "ies"} flagged` : "No anomalies flagged"}</strong><span>{anomalyCount > 0 ? "Review the affected windows and supporting evidence." : "No anomaly was flagged in this response window."}</span></div></div>}
               {hasFindings && <div className="av-findings-hint"><AlertTriangle size={14} /> Findings are indicators for review, not proof of malicious activity.</div>}
             </div>
@@ -159,16 +209,80 @@ export default function AnalysisPanel({ moduleName, onResult }) {
 }
 
 function parseOrFallback(text, fallback) { try { return JSON.parse(text); } catch { return fallback; } }
+
 function getSummaryItems(data) {
-  const preferred = ["verdict", "failed_attempt_count", "distinct_client_count", "analyzed_event_count", "status", "risk_level", "predicted_label", "label", "confidence", "anomaly_count", "target_window_count", "baseline_window_count", "total_requests", "finding_count", "count"];
-  const labels = { verdict: "Verdict", failed_attempt_count: "Failed attempts", distinct_client_count: "Client IPs", analyzed_event_count: "Events analyzed", risk_level: "Risk level", predicted_label: "Predicted class", label: "Classification", confidence: "Confidence", anomaly_count: "Anomalies", target_window_count: "Target windows", baseline_window_count: "Baseline windows", total_requests: "Requests analyzed", finding_count: "Findings", count: "Result count" };
+  if (!data || typeof data !== "object") return [];
+
+  const preferred = [
+    "verdict",
+    "risk_level",
+    "predicted_label",
+    "label",
+    "confidence",
+    "sample_count",
+    "feature_count",
+    "total_clients",
+    "total_events_analyzed",
+    "failed_attempt_count",
+    "distinct_client_count",
+    "distinct_actor_count",
+    "anomalous_request_count",
+    "analyzed_event_count",
+    "anomaly_count",
+    "target_window_count",
+    "baseline_window_count",
+    "total_requests",
+    "finding_count",
+    "count",
+  ];
+
+  const labels = {
+    verdict: "Verdict",
+    risk_level: "Risk level",
+    predicted_label: "Predicted class",
+    label: "Classification",
+    confidence: "Confidence",
+    sample_count: "Samples",
+    feature_count: "Features",
+    total_clients: "Clients evaluated",
+    total_events_analyzed: "Events analyzed",
+    failed_attempt_count: "Failed attempts",
+    distinct_client_count: "Client IPs",
+    distinct_actor_count: "Actor identities",
+    anomalous_request_count: "Anomalous requests",
+    analyzed_event_count: "Events analyzed",
+    anomaly_count: "Anomalies",
+    target_window_count: "Target windows",
+    baseline_window_count: "Baseline windows",
+    total_requests: "Requests analyzed",
+    finding_count: "Findings",
+    count: "Result count",
+  };
+
   const items = [];
-  for (const key of preferred) {
-    const value = data?.[key];
-    if ((typeof value === "string" || typeof value === "number" || typeof value === "boolean") && value !== "") {
-      items.push({ label: labels[key] || key.replaceAll("_", " "), value: typeof value === "number" && key === "confidence" && value <= 1 ? `${(value * 100).toFixed(1)}%` : String(value) });
+
+  // Handle nested clustering metrics
+  if (data.kmeans && typeof data.kmeans === "object") {
+    if (typeof data.kmeans.anomaly_count === "number") {
+      items.push({ label: "K-Means Outliers", value: String(data.kmeans.anomaly_count) });
     }
-    if (items.length === 4) break;
   }
-  return items;
+  if (data.lof && typeof data.lof === "object") {
+    if (typeof data.lof.anomaly_count === "number") {
+      items.push({ label: "LOF Outliers", value: String(data.lof.anomaly_count) });
+    }
+  }
+
+  for (const key of preferred) {
+    if (items.length >= 4) break;
+    const value = data[key];
+    if ((typeof value === "string" || typeof value === "number" || typeof value === "boolean") && value !== "") {
+      items.push({
+        label: labels[key] || key.replaceAll("_", " "),
+        value: typeof value === "number" && key === "confidence" && value <= 1 ? `${(value * 100).toFixed(1)}%` : String(value),
+      });
+    }
+  }
+
+  return items.slice(0, 4);
 }

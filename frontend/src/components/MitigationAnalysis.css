@@ -1,0 +1,292 @@
+/* Bot Mitigation Analysis dashboard. Uses global APISentry tokens from App.css. */
+.mit-v2 {
+  display: flex;
+  flex-direction: column;
+  gap: 18px;
+  min-width: 0;
+  color: var(--text);
+}
+
+.mit-hero {
+  position: relative;
+  overflow: hidden;
+  padding: 22px 24px 18px;
+  border: 1px solid #293d52;
+  border-radius: 18px;
+  background: radial-gradient(ellipse at 88% 0%, rgba(244, 187, 101, .12), transparent 42%),
+    linear-gradient(135deg, #142235 0%, #0e1927 65%, #101c2b 100%);
+}
+.mit-hero-top { display: flex; align-items: center; justify-content: space-between; gap: 12px; }
+.mit-kicker { display: inline-flex; align-items: center; gap: 7px; color: var(--amber); font-size: 10px; font-weight: 800; letter-spacing: 1.8px; }
+.mit-method { padding: 6px 10px; border: 1px solid #6b5226; border-radius: 999px; color: var(--amber); background: rgba(244, 187, 101, .08); font-size: 9px; font-weight: 800; letter-spacing: 1.1px; }
+.mit-hero-main { display: flex; align-items: center; gap: 14px; margin-top: 14px; }
+.mit-hero-icon { display: grid; place-items: center; width: 46px; height: 46px; flex-shrink: 0; border: 1px solid #6b5226; border-radius: 12px; color: var(--amber); background: rgba(244, 187, 101, .1); }
+.mit-hero h2 { margin: 0; font-size: 21px; letter-spacing: -.5px; }
+.mit-hero p { margin: 5px 0 0; color: var(--muted); font-size: 12px; line-height: 1.55; }
+.mit-route { display: flex; align-items: center; gap: 8px; margin-top: 16px; padding-top: 12px; border-top: 1px solid rgba(255, 255, 255, .06); color: var(--muted); font-size: 9px; font-weight: 800; letter-spacing: 1.2px; }
+.mit-route > span:first-child { width: 6px; height: 6px; border-radius: 50%; background: var(--amber); box-shadow: 0 0 8px #f4bb6577; }
+.mit-route code { color: #a9bdd4; font-size: 10px; letter-spacing: 0; font-weight: 600; }
+
+.mit-enforcement-banner { display: flex; align-items: flex-start; gap: 12px; padding: 14px 17px; border: 1px solid #7a3540; border-radius: 12px; background: rgba(255, 114, 124, .08); }
+.mit-enforcement-banner > svg { flex-shrink: 0; margin-top: 2px; color: var(--red); }
+.mit-enforcement-banner > div { display: flex; flex-direction: column; gap: 4px; }
+.mit-enforcement-banner strong { color: #ffc2c7; font-size: 12px; font-weight: 900; letter-spacing: 1px; }
+.mit-enforcement-banner span { color: #f0b8bd; font-size: 11px; line-height: 1.55; }
+
+.mit-card { padding: 18px 20px; border: 1px solid var(--border); border-radius: 14px; background: linear-gradient(180deg, rgba(255, 255, 255, .015), transparent), var(--panel); }
+.mit-card-head { display: flex; align-items: flex-start; justify-content: space-between; gap: 14px; padding-bottom: 14px; margin-bottom: 16px; border-bottom: 1px solid var(--border); }
+.mit-card-head > svg { flex-shrink: 0; color: var(--muted); }
+.mit-step { display: block; color: var(--amber); font-size: 9px; font-weight: 800; letter-spacing: 1.6px; }
+.mit-card-head h3 { margin: 5px 0 3px; font-size: 15px; letter-spacing: -.2px; }
+.mit-card-head p { margin: 0; color: var(--muted); font-size: 11px; line-height: 1.5; }
+
+.mit-filter-grid { display: grid; grid-template-columns: repeat(auto-fit, minmax(175px, 1fr)); gap: 12px; }
+.mit-filter-grid label { display: flex; flex-direction: column; gap: 6px; color: var(--muted); font-size: 10px; font-weight: 700; letter-spacing: .3px; }
+.mit-filter-grid label small { color: #6f8298; font-weight: 500; }
+.mit-filter-grid input[type="text"],
+.mit-filter-grid input[type="number"],
+.mit-filter-grid input[type="datetime-local"],
+.mit-filter-grid select { width: 100%; min-height: 36px; padding: 8px 10px; border: 1px solid #2b3d52; border-radius: 8px; outline: none; background: #0d1826; color: var(--text); font-size: 12px; font-family: inherit; transition: border-color .15s ease; }
+.mit-filter-grid input:focus,
+.mit-filter-grid select:focus { border-color: #7a6332; }
+.mit-filter-grid input::placeholder { color: #5c6f85; }
+.mit-filter-grid .mit-check { flex-direction: row; align-items: center; gap: 9px; align-self: end; min-height: 36px; color: var(--text); font-size: 11px; font-weight: 600; }
+.mit-filter-grid .mit-check input { width: 15px; height: 15px; accent-color: #f4bb65; cursor: pointer; }
+.mit-actions { display: flex; align-items: center; gap: 10px; margin-top: 16px; padding-top: 14px; border-top: 1px solid var(--border); }
+.mit-run, .mit-reset { display: inline-flex; align-items: center; justify-content: center; gap: 8px; min-height: 36px; padding: 0 16px; border-radius: 8px; font-size: 11px; font-weight: 800; letter-spacing: .3px; cursor: pointer; transition: opacity .15s ease; }
+.mit-run { border: 1px solid #8a6a2e; color: #1c1204; background: var(--amber); }
+.mit-reset { border: 1px solid #2e4359; color: var(--text); background: transparent; }
+.mit-run:hover:not(:disabled), .mit-reset:hover:not(:disabled) { opacity: .88; }
+.mit-run:disabled, .mit-reset:disabled { opacity: .5; cursor: not-allowed; }
+.mit-spin { animation: mit-spin .8s linear infinite; }
+@keyframes mit-spin { to { transform: rotate(360deg); } }
+
+.mit-placeholder, .mit-error, .mit-empty { display: flex; flex-direction: column; align-items: center; justify-content: center; gap: 9px; min-height: 190px; text-align: center; }
+.mit-placeholder > svg, .mit-empty > svg { color: var(--muted); }
+.mit-placeholder strong, .mit-empty strong { font-size: 14px; }
+.mit-placeholder p, .mit-empty p { max-width: 460px; margin: 0; color: var(--muted); font-size: 11px; line-height: 1.6; }
+.mit-empty { border-color: #2d4a45; background: rgba(37, 199, 165, .04); }
+.mit-empty > svg { color: var(--green); }
+.mit-error { flex-direction: row; align-items: flex-start; justify-content: flex-start; min-height: auto; padding: 16px 20px; border-color: #7a3540; background: rgba(255, 114, 124, .06); text-align: left; }
+.mit-error > svg { flex-shrink: 0; color: var(--red); }
+.mit-error strong { font-size: 13px; }
+.mit-error p { margin: 4px 0 0; color: #f0b8bd; font-size: 11px; line-height: 1.6; }
+
+.mit-policy-state { display: flex; align-items: flex-start; gap: 12px; border-color: #6b5226; background: rgba(244, 187, 101, .06); }
+.mit-policy-state > svg { flex-shrink: 0; color: var(--amber); }
+.mit-policy-state strong { font-size: 13px; }
+.mit-policy-state p { margin: 5px 0 0; color: #f0d4a3; font-size: 11px; line-height: 1.55; }
+.mit-policy-state small { display: block; margin-top: 5px; color: var(--muted); font-size: 10px; }
+.mit-persistence-state { display: flex; align-items: flex-start; gap: 12px; border-color: #7a3540; background: rgba(255, 114, 124, .05); }
+.mit-persistence-state > svg { flex-shrink: 0; color: var(--red); }
+.mit-persistence-state strong { font-size: 13px; }
+.mit-persistence-state p { margin: 5px 0 0; color: #f0b8bd; font-size: 11px; line-height: 1.55; }
+
+.mit-stats { display: grid; grid-template-columns: repeat(auto-fit, minmax(150px, 1fr)); gap: 10px; }
+.mit-stat { display: flex; flex-direction: column; gap: 4px; padding: 12px 14px; border: 1px solid #243448; border-radius: 10px; background: #0e1a28; }
+.mit-stat span { color: var(--muted); font-size: 10px; font-weight: 600; }
+.mit-stat strong { font-size: 18px; font-weight: 800; letter-spacing: -.4px; word-break: break-word; }
+.mit-stat small { color: #6f8298; font-size: 9px; line-height: 1.4; }
+.mit-stat.ok strong { color: var(--green); }
+.mit-stat.warn strong { color: var(--amber); }
+.mit-limit-note { display: flex; align-items: flex-start; gap: 8px; margin-top: 14px; padding: 10px 12px; border: 1px dashed #34475c; border-radius: 9px; background: rgba(103, 169, 255, .04); color: #b9c9db; font-size: 10px; line-height: 1.55; }
+.mit-limit-note > svg { flex-shrink: 0; color: var(--blue); }
+
+.mit-detection-summary { padding: 0; }
+.mit-detection-summary > summary { display: flex; align-items: center; gap: 8px; padding: 16px 20px; list-style: none; cursor: pointer; color: var(--text); font-size: 12px; font-weight: 700; }
+.mit-detection-summary > summary::-webkit-details-marker { display: none; }
+.mit-detection-summary > summary > svg { color: var(--blue); transition: transform .15s ease; }
+.mit-detection-summary[open] > summary > svg { transform: rotate(90deg); }
+.mit-detection-summary > summary small { margin-left: auto; color: var(--muted); font-size: 10px; font-weight: 600; }
+.mit-detection-body { padding: 0 20px 18px; border-top: 1px solid var(--border); }
+.mit-detection-facts { display: grid; grid-template-columns: repeat(auto-fit, minmax(140px, 1fr)); gap: 10px; margin: 16px 0; }
+.mit-detection-facts > div { display: flex; flex-direction: column; gap: 4px; padding: 10px 12px; border: 1px solid #243448; border-radius: 9px; background: #0e1a28; }
+.mit-detection-facts span { color: var(--muted); font-size: 9px; font-weight: 700; text-transform: uppercase; letter-spacing: .4px; }
+.mit-detection-facts strong { font-size: 12px; }
+.mit-detection-list { display: flex; flex-direction: column; gap: 6px; }
+.mit-detection-row { display: grid; grid-template-columns: 1.2fr 1fr auto; gap: 10px; align-items: center; padding: 9px 11px; border: 1px solid #243448; border-radius: 8px; background: #0b1521; font-size: 10px; }
+.mit-detection-row span:first-child { font-family: "SFMono-Regular", Consolas, monospace; }
+.mit-detection-row span:nth-child(2) { color: var(--muted); }
+.mit-detection-row strong { color: var(--blue); }
+.mit-detection-row strong small { color: var(--muted); font-size: 8px; }
+.mit-muted { margin: 10px 0 0; color: var(--muted); font-size: 10px; line-height: 1.6; }
+.mit-count { padding: 5px 10px; border: 1px solid #2b3d52; border-radius: 999px; color: var(--muted); font-size: 10px; font-weight: 700; }
+
+.mit-outcomes { display: flex; flex-direction: column; gap: 12px; }
+.mit-outcome { padding: 14px 16px; border: 1px solid #243448; border-radius: 11px; background: #0e1a28; }
+.mit-outcome-top { display: flex; align-items: center; justify-content: space-between; gap: 12px; flex-wrap: wrap; }
+.mit-outcome-title { display: flex; align-items: center; gap: 9px; flex-wrap: wrap; }
+.mit-index { color: #a9bdd4; font-family: "SFMono-Regular", Consolas, monospace; font-size: 11px; font-weight: 700; }
+.mit-status { padding: 4px 9px; border-radius: 999px; font-size: 9px; font-weight: 800; letter-spacing: .4px; text-transform: uppercase; }
+.mit-status.ok { color: var(--green); background: rgba(37, 199, 165, .1); border: 1px solid #1d5a4e; }
+.mit-status.warn { color: var(--amber); background: rgba(244, 187, 101, .1); border: 1px solid #6b5226; }
+.mit-persist-note { color: var(--muted); font-size: 9px; font-weight: 600; }
+.mit-decision-line { display: flex; align-items: center; gap: 10px; flex-wrap: wrap; margin-top: 13px; padding: 9px 11px; border: 1px solid #243448; border-radius: 8px; background: #0b1521; }
+.mit-decision-label { color: var(--muted); font-size: 9px; font-weight: 700; text-transform: uppercase; letter-spacing: .5px; }
+.mit-decision { padding: 3px 8px; border-radius: 6px; font-size: 10px; font-weight: 800; }
+.mit-decision.calm { color: var(--green); background: rgba(37, 199, 165, .12); }
+.mit-decision.info { color: var(--blue); background: rgba(103, 169, 255, .12); }
+.mit-decision.warn { color: var(--amber); background: rgba(244, 187, 101, .12); }
+.mit-decision.critical { color: var(--red); background: rgba(255, 114, 124, .12); }
+.mit-decision.neutral { color: var(--muted); background: rgba(132, 148, 169, .12); }
+.mit-outcome-grid { display: grid; grid-template-columns: repeat(auto-fit, minmax(160px, 1fr)); gap: 10px; margin-top: 13px; }
+.mit-outcome-grid > div { display: flex; flex-direction: column; gap: 4px; }
+.mit-outcome-grid span { color: var(--muted); font-size: 9px; font-weight: 700; text-transform: uppercase; letter-spacing: .4px; }
+.mit-outcome-grid strong { font-size: 11px; font-weight: 600; word-break: break-word; }
+.mit-outcome-grid .mit-hash { color: #9fb4cb; font-family: "SFMono-Regular", Consolas, monospace; font-size: 9px; }
+.mit-explanation { margin: 13px 0 0; padding: 10px 12px; border-left: 2px solid var(--blue); border-radius: 0 8px 8px 0; background: rgba(103, 169, 255, .05); color: #bfd2e6; font-size: 11px; line-height: 1.6; }
+.mit-code-block { margin-top: 13px; }
+.mit-code-block > span { display: block; margin-bottom: 6px; color: var(--muted); font-size: 9px; font-weight: 700; text-transform: uppercase; letter-spacing: .4px; }
+.mit-code-block > div { display: flex; flex-wrap: wrap; gap: 6px; }
+.mit-code-block code { padding: 4px 8px; border: 1px solid #2b3d52; border-radius: 5px; background: #0b1521; color: #a9bdd4; font-size: 9px; }
+.mit-evidence-note, .mit-no-decision, .mit-uuid { margin: 12px 0 0; color: var(--muted); font-size: 10px; line-height: 1.6; }
+.mit-no-decision { padding: 10px 12px; border: 1px dashed #34475c; border-radius: 8px; color: #b9c9db; }
+.mit-uuid code { color: #9fb4cb; font-size: 9px; word-break: break-all; }
+
+.mit-footer { display: flex; align-items: flex-start; gap: 9px; flex-wrap: wrap; padding: 13px 16px; border: 1px solid var(--border); border-radius: 11px; background: #0d1826; }
+.mit-footer > svg { flex-shrink: 0; margin-top: 2px; color: var(--green); }
+.mit-footer > div { display: flex; flex-direction: column; gap: 3px; }
+.mit-footer strong { color: #ffc2c7; font-size: 10px; font-weight: 900; letter-spacing: .9px; }
+.mit-footer span { color: #b9c9db; font-size: 10px; line-height: 1.5; }
+.mit-footer-time { display: inline-flex; align-items: center; gap: 5px; margin-left: auto; color: var(--muted) !important; font-size: 9px !important; }
+
+@media (max-width: 720px) {
+  .mit-hero, .mit-card { padding: 16px; }
+  .mit-detection-summary > summary { padding: 16px; }
+  .mit-detection-body { padding: 0 16px 16px; }
+  .mit-detection-row { grid-template-columns: 1fr; }
+  .mit-outcome-top { flex-direction: column; align-items: flex-start; }
+  .mit-footer-time { margin-left: 0; }
+}
+
+/* Light theme compatibility for Mitigation Analysis. Layout is unchanged. */
+[data-theme="light"] .mit-v2 { color: var(--text-primary); }
+[data-theme="light"] .mit-hero {
+  background: linear-gradient(180deg, rgba(var(--warning-rgb), 0.05), var(--surface));
+  border-color: var(--border);
+}
+[data-theme="light"] .mit-method,
+[data-theme="light"] .mit-hero-icon {
+  color: var(--warning);
+  background: rgba(var(--warning-rgb), 0.08);
+  border-color: rgba(var(--warning-rgb), 0.28);
+}
+[data-theme="light"] .mit-route { border-color: var(--border); }
+[data-theme="light"] .mit-enforcement-banner {
+  border-color: rgba(var(--danger-rgb), 0.28);
+  background: rgba(var(--danger-rgb), 0.07);
+}
+[data-theme="light"] .mit-enforcement-banner strong { color: var(--danger); }
+[data-theme="light"] .mit-enforcement-banner span,
+[data-theme="light"] .mit-route code,
+[data-theme="light"] .mit-filter-grid label small,
+[data-theme="light"] .mit-error p,
+[data-theme="light"] .mit-stat small,
+[data-theme="light"] .mit-policy-state p,
+[data-theme="light"] .mit-persistence-state p,
+[data-theme="light"] .mit-limit-note,
+[data-theme="light"] .mit-explanation,
+[data-theme="light"] .mit-no-decision,
+[data-theme="light"] .mit-footer span,
+[data-theme="light"] .mit-muted,
+[data-theme="light"] .mit-uuid {
+  color: var(--text-secondary);
+}
+[data-theme="light"] .mit-card,
+[data-theme="light"] .mit-stat,
+[data-theme="light"] .mit-detection-facts > div,
+[data-theme="light"] .mit-detection-row,
+[data-theme="light"] .mit-outcome,
+[data-theme="light"] .mit-decision-line,
+[data-theme="light"] .mit-footer {
+  background: var(--surface);
+  border-color: var(--border);
+  box-shadow: var(--shadow-sm);
+}
+[data-theme="light"] .mit-filter-grid input[type="text"],
+[data-theme="light"] .mit-filter-grid input[type="number"],
+[data-theme="light"] .mit-filter-grid input[type="datetime-local"],
+[data-theme="light"] .mit-filter-grid select {
+  color: var(--text-primary);
+  background: var(--surface);
+  border-color: var(--border);
+}
+[data-theme="light"] .mit-filter-grid input:focus,
+[data-theme="light"] .mit-filter-grid select:focus {
+  border-color: var(--accent);
+  box-shadow: 0 0 0 3px rgba(var(--accent-rgb), 0.14);
+}
+[data-theme="light"] .mit-filter-grid input::placeholder { color: var(--text-muted); }
+[data-theme="light"] .mit-filter-grid .mit-check input { accent-color: var(--warning); }
+[data-theme="light"] .mit-run {
+  color: var(--accent-contrast);
+  background: var(--warning);
+  border-color: var(--warning);
+}
+[data-theme="light"] .mit-reset {
+  color: var(--text-primary);
+  background: var(--surface-muted);
+  border-color: var(--border);
+}
+[data-theme="light"] .mit-error {
+  border-color: rgba(var(--danger-rgb), 0.28);
+  background: rgba(var(--danger-rgb), 0.06);
+}
+[data-theme="light"] .mit-empty {
+  border-color: rgba(var(--success-rgb), 0.26);
+  background: rgba(var(--success-rgb), 0.06);
+}
+[data-theme="light"] .mit-policy-state {
+  border-color: rgba(var(--warning-rgb), 0.28);
+  background: rgba(var(--warning-rgb), 0.07);
+}
+[data-theme="light"] .mit-persistence-state {
+  border-color: rgba(var(--danger-rgb), 0.28);
+  background: rgba(var(--danger-rgb), 0.06);
+}
+[data-theme="light"] .mit-limit-note,
+[data-theme="light"] .mit-explanation {
+  border-left-color: var(--info);
+  background: rgba(var(--info-rgb), 0.06);
+}
+[data-theme="light"] .mit-detection-body { border-color: var(--border); }
+[data-theme="light"] .mit-status.ok {
+  color: var(--success);
+  background: rgba(var(--success-rgb), 0.10);
+  border-color: rgba(var(--success-rgb), 0.28);
+}
+[data-theme="light"] .mit-status.warn {
+  color: var(--warning);
+  background: rgba(var(--warning-rgb), 0.10);
+  border-color: rgba(var(--warning-rgb), 0.28);
+}
+[data-theme="light"] .mit-decision.calm {
+  color: var(--success);
+  background: rgba(var(--success-rgb), 0.10);
+}
+[data-theme="light"] .mit-decision.info {
+  color: var(--info);
+  background: rgba(var(--info-rgb), 0.10);
+}
+[data-theme="light"] .mit-decision.warn {
+  color: var(--warning);
+  background: rgba(var(--warning-rgb), 0.10);
+}
+[data-theme="light"] .mit-decision.critical {
+  color: var(--danger);
+  background: rgba(var(--danger-rgb), 0.10);
+}
+[data-theme="light"] .mit-code-block code {
+  color: var(--text-secondary);
+  background: var(--surface-muted);
+  border-color: var(--border);
+}
+[data-theme="light"] .mit-no-decision { border-color: var(--border); }
+[data-theme="light"] .mit-footer strong { color: var(--danger); }
+[data-theme="light"] .mit-index,
+[data-theme="light"] .mit-detection-row span:first-child,
+[data-theme="light"] .mit-hash,
+[data-theme="light"] .mit-uuid code { color: var(--text-primary); }
+[data-theme="light"] .mit-detection-row strong { color: var(--accent); }
+[data-theme="light"] .mit-detection-summary > summary { color: var(--text-primary); }
+[data-theme="light"] .mit-detection-summary > summary > svg { color: var(--accent); }

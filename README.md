@@ -29,7 +29,7 @@ Research dataset and controlled-collection documentation is maintained in
 11. [Testing](#testing)
 12. [Limitations](#limitations)
 13. [Future Enhancements](#future-enhancements)
-14. [Author](#author)
+14. [Project Team](#project-team)
 
 ---
 
@@ -119,34 +119,40 @@ The following diagram illustrates the high-level architecture of APISentry AI.
 ```mermaid
 flowchart TB
     U["User"] --> FE["React 19 + Vite Dashboard"]
-    FE -->|"REST API / HTTP"| API["FastAPI Backend"]
+    FE -->|"REST API / JWT bearer token"| API["FastAPI Backend"]
 
     subgraph BACKEND["Backend - FastAPI"]
-        API --> AUTH["JWT Authentication"]
-        API --> SEC["API Key Security"]
-
-        AUTH --> ROUTER["API v1 Router"]
-        SEC --> ROUTER
-
+        API --> AUTH["JWT Authentication / RBAC"]
+        API --> ROUTER["API v1 Router"]
+        AUTH --> ROUTER
         ROUTER --> DET["Detection Services"]
-
-        subgraph ENGINE["Detection Engine"]
-            DET --> B["Behavioral Risk"]
-            DET --> BOLA["BOLA Detection"]
-            DET --> BF["Brute-Force Detection"]
-            DET --> RATE["Rate Anomaly"]
-            DET --> CL["Clustering"]
-            DET --> TOK["Token Classification"]
-            DET --> TT["Traffic Trend Analysis"]
-        end
-
+        ROUTER --> MIT["Advisory Mitigation Services"]
+        DET --> RESULT["Analysis Results / Risk Insights"]
+        MIT --> RESULT
         DET --> DBL["SQLAlchemy Database Layer"]
+        MIT --> DBL
     end
 
-    DBL --> DB[("PostgreSQL")]
-    DET --> RESULT["Analysis Results / Risk Insights"]
+    subgraph ENGINE["Detection Engine"]
+        DET --> B["Behavioral Risk"]
+        DET --> BOLA["BOLA Detection"]
+        DET --> BF["Brute-Force Detection"]
+        DET --> RATE["Rate Anomaly"]
+        DET --> CL["Clustering"]
+        DET --> TOK["Token Classification"]
+        DET --> TT["Traffic Trend Analysis"]
+        DET --> HTTP["HTTP Payload Classification"]
+    end
+
+    DBL --> DB[("SQLite local demos / PostgreSQL persistence")]
     RESULT --> API
     API --> FE
+
+    subgraph SUPPORT["Supporting Repository Areas"]
+        MIG["backend/alembic/ migrations"]
+        RES["research/ scripts, tests and local artifacts"]
+        DOCS["docs/ and historical APISENTRY_*.md reports"]
+    end
 ```
 
 ### Architecture Explanation
@@ -155,25 +161,39 @@ flowchart TB
 
 - Built using React and Vite.
 - Provides the user interface and dashboard.
-- Communicates with the backend through HTTP-based API requests.
+- Communicates with the backend through a centralized API client using JWT bearer tokens.
+- Does not configure or send browser API keys.
 
 **Backend Layer**
 
-- Built using FastAPI.
-- Handles incoming requests and application logic.
-- Provides API endpoints and connects the detection modules.
-- Implements authentication and API key security.
+- Built using FastAPI with JWT authentication and role-based access control.
+- Provides API endpoints and connects detection, mitigation, and persistence services.
+- Includes an optional server-to-server API-key dependency for non-browser clients.
+- Keeps Gate E and WP9 demo control planes isolated and default-disabled.
+- Does not register production request-time enforcement middleware; enforcement remains advisory-only.
 
 **Detection Engine**
 
-- Contains seven individual detection modules.
-- Analyzes API traffic using different detection approaches.
-- Produces security-related analysis results.
+- Contains seven primary detection modules plus artifact-gated HTTP payload classification.
+- Analyzes API traffic using rule-based, behavioral, statistical, and machine-learning-assisted approaches.
+- Produces advisory security insights, not definitive attack proof.
+
+**Mitigation Services**
+
+- Provides policy lifecycle, validation, dry-run, decision, audit, and runtime-analysis services.
+- Results are advisory-only in the default application.
 
 **Database Layer**
 
 - Uses SQLAlchemy for database operations.
-- Uses PostgreSQL for persistent data storage.
+- Uses SQLite for isolated local demos/tests and PostgreSQL for persistent validation.
+- Keeps production schema auto-creation disabled; schema changes require explicit reviewed Alembic operations.
+
+**Research and Documentation Areas**
+
+- `research/` contains scripts, tests, local datasets, and model artifacts used for research and reproducibility.
+- Large raw dataset and model artifacts are excluded from the frozen GitHub contribution.
+- `docs/` and historical `APISENTRY_*.md` reports preserve runbooks, checkpoints, and verified evidence snapshots.
 
 ---
 
@@ -237,49 +257,62 @@ Each module focuses on a different category of API security analysis. Their comb
 API-SENTRY-AI/
 |
 |-- backend/
+|   |-- alembic/                  # migration environment and revisions
 |   |-- app/
-|   |   |-- api/
-|   |   |-- core/
-|   |   |-- db/
-|   |   |-- detection/
-|   |   |-- models/
-|   |   |-- schemas/
-|   |   |-- services/
-|   |   `-- utils/
-|   |
-|   |-- models/
-|   |-- tests/
+|   |   |-- api/                  # v1 routes, including mitigation services
+|   |   |-- core/                 # configuration, security, rate limiting
+|   |   |-- db/                   # SQLAlchemy session and initialization
+|   |   |-- detection/            # behavioral, BOLA, brute-force, anomaly modules
+|   |   |-- models/               # persisted data models
+|   |   |-- schemas/              # request/response and lifecycle schemas
+|   |   |-- services/             # detection, mitigation, persistence services
+|   |   `-- utils/                # shared helpers and middleware support
+|   |-- models/                   # local model artifacts
+|   |-- scripts/                  # optional manual and training utilities
+|   |-- tests/                    # backend automated tests
 |   |-- .env.example
 |   `-- requirements.txt
 |
 |-- frontend/
 |   |-- public/
-|   |-- src/
+|   |-- src/                      # React dashboard, components and API client
+|   |-- tests/                    # frontend node tests
 |   |-- package.json
 |   `-- vite.config.js
 |
-|-- scripts/
-|
+|-- docs/                         # deployment, reproducibility and review docs
+|-- research/
+|   |-- datasets/raw/             # local research datasets; large files excluded from contribution
+|   |-- models/                   # local classifier artifacts; excluded from contribution
+|   |-- scripts/                  # research training/prediction scripts
+|   |-- tests/                    # optional research suite
+|   `-- README.md
+|-- APISENTRY_*.md                 # historical snapshot reports
+|-- scripts/                      # project utility scripts
 `-- README.md
 ```
 
 ### Directory Description
 
+**backend/alembic/**
+
+Contains the migration environment and schema revisions. Migrations are applied only through explicit reviewed operations.
+
 **backend/app/api/**
 
-Contains API routes and endpoint-related functionality.
+Contains API routes and endpoint-related functionality, including authentication, detection, advisory mitigation, policy administration, and default-disabled demo control planes.
 
 **backend/app/core/**
 
-Contains core application configuration and security-related functionality.
+Contains core application configuration, JWT/RBAC security, rate limiting, and middleware support.
 
 **backend/app/db/**
 
-Contains database configuration and connection-related functionality.
+Contains database configuration, session management, and initialization guards.
 
 **backend/app/detection/**
 
-Contains the API security detection modules.
+Contains the primary API security detection modules.
 
 **backend/app/models/**
 
@@ -287,11 +320,11 @@ Contains application data models.
 
 **backend/app/schemas/**
 
-Contains data validation schemas.
+Contains data validation schemas and lifecycle contracts.
 
 **backend/app/services/**
 
-Contains application service logic.
+Contains detection, mitigation, persistence, artifact-policy, and advisory service logic.
 
 **backend/app/utils/**
 
@@ -299,11 +332,31 @@ Contains reusable utility functions.
 
 **backend/tests/**
 
-Contains backend automated tests.
+Contains backend automated tests, including the safe default suite and the separately gated PostgreSQL lifecycle test.
+
+**backend/scripts/**
+
+Contains optional manual and training utilities. These are not part of normal application startup.
 
 **frontend/src/**
 
-Contains the React frontend source code.
+Contains the React frontend source code and centralized API client.
+
+**frontend/tests/**
+
+Contains frontend node tests.
+
+**docs/**
+
+Contains deployment, reproducibility, evaluation, and review documentation.
+
+**research/**
+
+Contains optional research scripts, tests, local datasets, and model artifacts. Large raw dataset/model artifacts are excluded from the frozen GitHub contribution.
+
+**APISENTRY_\*.md**
+
+Contains historical snapshot reports. Their original test counts are intentionally preserved as historical evidence.
 
 **scripts/**
 
@@ -444,11 +497,56 @@ Start the Vite development server:
 npm run dev
 ```
 
-Frontend URL:
+Frontend URL with the unchanged Vite configuration:
 
 ```text
 http://localhost:5173
 ```
+
+`frontend/vite.config.js` does not override the Vite port, so `npm run dev` uses
+Vite's default `5173`. The backend CORS template in `backend/.env.example`
+permits `http://127.0.0.1:5174` and `http://localhost:5174` because earlier
+isolated demos used `5174`. If you run the frontend on `5173`, add that origin
+to your local `CORS_ORIGINS`; if you explicitly start Vite on `5174`, the
+template already allows it. Neither port is a production configuration.
+
+### 3. Local brute-force demonstration (non-production only)
+
+`scripts/simulate_bruteforce_demo.py` generates failed logins against
+`POST /demo/auth/login` and then queries the brute-force analysis endpoint.
+That demo endpoint is **disabled by default** and is never available in
+production. Enable it only on a local, non-production server:
+
+1. Confirm `ENVIRONMENT` is not `production` (for example, `development`).
+2. Set `APISENTRY_ENABLE_DEMO_AUTH=True` in your local `backend/.env`.
+3. Choose a fresh `DEMO_PASSWORD` and set it locally. Do not reuse a real
+   credential.
+4. Restart the backend. The demo route is registered at startup, so a running
+   server must be restarted after changing these settings.
+5. Open `http://localhost:8000/docs` and confirm `POST /demo/auth/login` is
+   listed. A 404 or a missing entry means the flag, password, or environment
+   is not set correctly. Keep the demo server bound to localhost and never
+   expose a demo-auth server publicly.
+
+The simulator has no built-in API key. Supply one explicitly at run time,
+either through the `APISENTRY_DEMO_API_KEY` environment variable (preferred,
+because it keeps the value out of shell history) or with `--api-key`:
+
+```powershell
+$env:APISENTRY_DEMO_API_KEY = <key supplied out of band>
+python scripts/simulate_bruteforce_demo.py
+
+# Alternative:
+python scripts/simulate_bruteforce_demo.py --api-key <key supplied out of band>
+```
+
+If neither source is provided, the simulator exits with a clear error before
+making any request. It never prints or logs the key. Do not paste real keys
+into files, shell scripts, or documentation, and never commit credentials.
+
+After the presentation, set `APISENTRY_ENABLE_DEMO_AUTH=false`, clear
+`DEMO_PASSWORD`, and restart the backend. Verify `POST /demo/auth/login`
+returns 404 and no longer appears in `/docs`.
 
 ---
 
@@ -458,9 +556,17 @@ APISentry AI implements authentication and access protection for backend operati
 
 ### JWT Authentication
 
-JSON Web Tokens are used for token-based authentication.
+JSON Web Tokens are used for token-based authentication. JWT authentication
+helps the application identify authenticated users and control access to
+protected functionality.
 
-JWT authentication helps the application identify authenticated users and control access to protected functionality.
+User accounts are persisted through the SQLAlchemy database layer when a
+configured database is available. The in-memory user registry remains a
+compatibility/fallback path for local and test tokens, not the primary
+production store. Role-based access control (Admin, Analyst, Viewer) is
+implemented for protected routes. PostgreSQL durability across restarts and
+workers still requires separate verification, and passing local tests does not
+establish production readiness.
 
 ### API Key Protection
 
@@ -478,45 +584,184 @@ The actual API key must be configured locally and must not be exposed in public 
 
 ---
 
-## Testing
+## Database Schema and Migrations (Phase 0)
 
-The backend uses Pytest for automated testing.
+Alembic manages the reviewed baseline revision
+`0001_baseline_existing_schema`. The baseline represents the existing
+`users` and `api_traffic_logs` tables, their columns, primary keys, unique and
+non-unique indexes, and the documented ad hoc index creation in
+`init_db()`. It does **not** create mitigation tables and does not implement
+enforcement.
 
-Run the test suite from the project root:
+The Alembic environment has no embedded connection string. The single URL
+source is `Settings.get_database_url()`; credentials and DSNs are never
+printed or logged. `alembic.ini` uses `%(here)s` paths and SQLite batch
+migrations are enabled.
+
+### Fresh database
+
+Use a new, empty database only. From the project root:
 
 ```powershell
 .\.venv\Scripts\Activate.ps1
-$env:PYTHONPATH = (Get-Location).Path
-python -m pytest backend/tests -v
+$env:PYTHONPATH = (Get-Location).Path + '\backend'
+alembic -c backend/alembic.ini upgrade head
+python -m app.scripts.verify_baseline
 ```
 
-The backend test suite has previously completed with:
+The upgrade creates both tables and the `alembic_version` marker. The verifier
+is read-only and exits `0` for PASS and `1` for FAIL. A fresh upgrade must
+report `SCHEMA_MATCHES_BASELINE`.
+
+### Existing database
+
+Never assume an existing database matches the baseline. Do not run `upgrade`
+or `stamp` first. Run the read-only verifier against an explicitly configured
+target:
+
+```powershell
+$env:PYTHONPATH = (Get-Location).Path + '\backend'
+python -m app.scripts.verify_baseline
+```
+
+A FAIL report gives actionable reason codes such as `MISSING_TABLE`,
+`MISSING_COLUMN`, `UNEXPECTED_COLUMN`, `MISSING_INDEX`, `UNEXPECTED_INDEX`,
+`INDEX_DEFINITION_MISMATCH`, `PRIMARY_KEY_MISMATCH`,
+`COLUMN_TYPE_MISMATCH`, `COLUMN_NULLABILITY_MISMATCH`,
+`UNEXPECTED_UNIQUE_CONSTRAINT`, `UNEXPECTED_CHECK_CONSTRAINT`,
+`UNEXPECTED_FOREIGN_KEY`, and `DATABASE_INSPECTION_FAILED`. The report contains
+schema object names only: no records, emails, usernames, password hashes, IP
+addresses, request IDs, API keys, or credentials. Known Alembic metadata is
+reported as `KNOWN_ADDITIONAL_OBJECT` rather than treated as an error.
+
+Investigate every unexplained difference before any change. Only a verified
+existing database may be stamped, and stamping must be a separate, explicitly
+reviewed operation with a verified backup:
+
+```powershell
+alembic -c backend/alembic.ini stamp 0001_baseline_existing_schema
+```
+
+The verifier never stamps automatically. A data checksum is intentionally
+deferred (`DATA_CHECKSUM_DEFERRED`): it requires deterministic canonicalization
+and a securely managed key outside the database. Do not substitute a weak
+checksum.
+
+### Production safety
+
+`AUTO_CREATE_SCHEMA` defaults to `True` so local development and tests keep
+working. Production settings force it to `False`. FastAPI startup never runs
+Alembic, and skips `init_db()` whenever the gate is disabled or the
+environment is production. `init_db()` itself raises in production as defence
+in depth. Apply schema changes only through explicit, reviewed Alembic
+operations against a backed-up target.
+
+The baseline deliberately refuses automatic downgrade. Recovery from a
+baseline state must be an explicit restore from a verified backup or a
+separately reviewed correction; do not use `downgrade` as a rollback mechanism.
+
+---
+
+## Testing
+
+Run the documented verification commands from the repository root unless a
+command explicitly states otherwise. No external database, server, or
+dependency installation is required for these checks.
+
+### Backend Safe Suite
+
+The backend uses Pytest. Run the supported safe suite from the repository root:
+
+```powershell
+.\.venv\Scripts\python.exe -B -m pytest -p no:cacheprovider -q backend/tests --ignore=backend/tests/test_mitigation_policy_lifecycle_persistence.py
+```
+
+`backend/tests/test_mitigation_policy_lifecycle_persistence.py` is separately
+gated because it requires PostgreSQL persistence testing. It is intentionally
+excluded from this safe command. Do not run it against a protected or
+unapproved database.
+
+The latest verified result for the safe suite is:
 
 ```text
-590 passed, 4 warnings
+1495 passed, 29 warnings
 ```
 
-The warnings were deprecation warnings and did not indicate test failures.
+The warnings are dependency/deprecation warnings and did not indicate test
+failures. Local test success does not establish production readiness.
+
+### Research Suite
+
+Run the optional research suite from the repository root; invoking it from a
+nested directory is not supported because its fixture paths assume the
+repository root as the working directory:
+
+```powershell
+.\.venv\Scripts\python.exe -B -m pytest -p no:cacheprovider -q research/tests
+```
+
+The latest verified result is:
+
+```text
+157 passed
+```
 
 ### Frontend Checks
 
-Navigate to the frontend directory:
+Run frontend tests from the repository root:
 
 ```powershell
-cd frontend
+node --test frontend/tests/*.test.js
 ```
 
-Run lint checks:
+The latest verified result is:
+
+```text
+33 passed
+```
+
+Run lint checks from the repository root:
 
 ```powershell
-npm run lint
+npm --prefix frontend run lint
 ```
 
-Create a production build:
+A production build was also verified successfully in a unique temporary output
+directory outside the repository:
 
 ```powershell
-npm run build
+npm --prefix frontend run build -- --outDir <unique-external-temp-directory>
 ```
+
+Do not use `--emptyOutDir` for that external-output verification. The build
+check confirms that production assets can be generated; it does not mean
+`frontend/dist` was regenerated or modified in the contribution.
+
+### Offline model training
+
+The backend includes a leakage-safe offline training utility at
+`backend/app/services/ml_training_service.py`. It accepts a caller-supplied,
+verified tabular dataset, validates finite numeric features and class labels,
+creates stratified training/validation/test partitions, fits preprocessing
+only on the training partition, and persists the scaler, model, feature names,
+and artifact version with `joblib`.
+
+The utility does not acquire data or create evaluation claims by itself.
+Metrics returned by the workflow describe only the held-out rows supplied by
+the caller. Local research artifacts may exist under `research/datasets/raw/`
+and `research/models/`, but the large raw dataset and model artifacts are
+excluded from the frozen GitHub contribution. They must not be assumed to be
+licensed or approved for redistribution; dataset licensing, provenance, and
+publication approval remain owner-review items. Local artifact availability
+does not by itself establish a completed real-world evaluation claim.
+
+The React dashboard uses the centralized client in
+`frontend/src/services/api.js`. Configure `VITE_API_BASE_URL` if the backend
+is not at the default local address. Protected analysis routes use the
+signed-in user's JWT bearer token from `frontend/src/services/tokenStorage.js`;
+do not configure a shared API key for the browser build, because a
+browser-delivered key is not a secret. Server-to-server API keys remain
+configured only in the backend environment.
 
 ---
 
@@ -527,7 +772,7 @@ The current implementation has some limitations:
 - Detection accuracy depends on the quality and completeness of the API traffic data supplied to the system.
 - Detection results should be treated as potential security indicators, not definitive proof of an attack.
 - Detection quality requires evaluation against representative real-world traffic.
-- JWT user registration and related user data are currently maintained in memory rather than through persistent user storage.
+- Persistent database-backed user storage exists; the in-memory registry is a compatibility/fallback path rather than the primary production store.
 - The platform is a monitoring and analysis project; it does not automatically prevent or block attacks against external production APIs.
 - Demonstration or sample traffic does not establish real-world attack detection effectiveness.
 
@@ -537,16 +782,14 @@ The current implementation has some limitations:
 
 Potential improvements include:
 
-1. Persistent user management and authentication storage.
-2. Advanced anomaly detection using larger and more representative datasets.
-3. Improved detection accuracy through model evaluation and tuning.
-4. Real-time API traffic monitoring.
-5. Automated alerts for high-risk activity.
-6. Detailed security reports and export functionality.
-7. Improved dashboard visualizations.
-8. Integration with external security monitoring tools.
-9. Role-based access control.
-10. Deployment using Docker and cloud infrastructure.
+1. Advanced anomaly detection using larger and more representative datasets.
+2. Improved detection accuracy through model evaluation and tuning.
+3. Real-time API traffic monitoring.
+4. Automated alerts for high-risk activity.
+5. Detailed security reports and export functionality.
+6. Improved dashboard visualizations.
+7. Integration with external security monitoring tools.
+8. Production deployment validation, Docker/cloud rollout, and operational sign-off.
 
 ---
 
@@ -554,15 +797,17 @@ Potential improvements include:
 
 APISentry AI is an academic software project focused on API security monitoring, behavioral analysis, and threat detection.
 
-The current implementation includes a FastAPI backend, React frontend, database integration, seven detection modules, authentication mechanisms, and automated backend tests.
+The current implementation includes a FastAPI backend, React frontend, database integration, seven primary detection modules, mitigation/runtime services, persistent user management, role-based access control, authentication mechanisms, and automated backend tests.
 
-The project demonstrates how different detection techniques can be combined into a centralized API security analysis platform.
+The project demonstrates how different detection techniques can be combined into a centralized API security analysis platform. These are implemented capabilities, not a production-readiness claim: production request-time enforcement remains disabled/advisory-only, and Gate E and WP9 are isolated, default-disabled demonstrations.
 
 ---
 
-## Author
+## Project Team
 
-**Prityush Pal**
+- Prityush Pal
+- Ishika Bharti
+- Sanya Singh
 
 GitHub: [@singhsanya2303-eng](https://github.com/singhsanya2303-eng)
 

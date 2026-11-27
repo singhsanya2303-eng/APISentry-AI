@@ -1,4 +1,5 @@
 from datetime import datetime
+import logging
 from typing import Optional
 from fastapi import APIRouter, Depends, Query, HTTPException, status
 from sqlalchemy.orm import Session
@@ -8,6 +9,7 @@ from app.detection.bola_detector import BolaDetectorConfig
 from app.services.bola_analysis_service import analyze_traffic_for_bola
 
 router = APIRouter(prefix="/security/bola", tags=["BOLA Security Analysis"])
+logger = logging.getLogger("apisentry.api.bola")
 
 
 @router.get("/analyze", response_model=BolaDetectionResult)
@@ -56,7 +58,8 @@ def analyze_bola_traffic(
     except HTTPException:
         raise
     except Exception as exc:
+        logger.exception("BOLA analysis failed")
         raise HTTPException(
             status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
-            detail=f"Database query failure during BOLA analysis: {exc}"
+            detail="BOLA analysis could not be completed.",
         ) from exc

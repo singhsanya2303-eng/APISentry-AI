@@ -33,6 +33,7 @@ class TokenUsageRandomForestClassifier:
         self,
         n_estimators: int = 200,
         random_state: int = 42,
+        scaler: Any = None,
     ) -> None:
         if (
             not isinstance(n_estimators, int)
@@ -43,6 +44,7 @@ class TokenUsageRandomForestClassifier:
 
         self.n_estimators = n_estimators
         self.random_state = random_state
+        self.scaler = scaler
         self.model = RandomForestClassifier(
             n_estimators=n_estimators,
             class_weight="balanced",
@@ -166,6 +168,9 @@ class TokenUsageRandomForestClassifier:
                 f"received {matrix.shape[1]}"
             )
 
+        if self.scaler is not None:
+            matrix = self.scaler.transform(matrix)
+
         labels = self.model.predict(matrix)
         probabilities = self.model.predict_proba(matrix)
         class_names = list(self.model.classes_)
@@ -204,6 +209,9 @@ class TokenUsageRandomForestClassifier:
                 f"received {matrix.shape[1]}"
             )
 
+        if self.scaler is not None:
+            matrix = self.scaler.transform(matrix)
+
         labels = self._validate_labels(true_labels, len(matrix))
         predictions = self.model.predict(matrix)
         ordered_labels = sorted(ALLOWED_LABELS)
@@ -238,6 +246,7 @@ class TokenUsageRandomForestClassifier:
             "random_state": self.random_state,
             "feature_names": self.feature_names,
             "model": self.model,
+            "scaler": self.scaler,
         }
         joblib.dump(checkpoint, path)
 
@@ -263,7 +272,12 @@ class TokenUsageRandomForestClassifier:
         model = checkpoint.get("model")
         feature_names = checkpoint.get("feature_names")
         n_estimators = checkpoint.get("n_estimators")
+        if n_estimators is None:
+            n_estimators = getattr(model, "n_estimators", 200)
+
         random_state = checkpoint.get("random_state")
+        if random_state is None:
+            random_state = getattr(model, "random_state", 42)
 
         if not isinstance(model, RandomForestClassifier):
             raise ValueError("Checkpoint does not contain a Random Forest model")
@@ -287,9 +301,18 @@ class TokenUsageRandomForestClassifier:
         if model_classes != ALLOWED_LABELS:
             raise ValueError("Checkpoint is missing one or more required classes")
 
+        scaler = checkpoint.get("scaler")
+        if scaler is not None:
+            if not hasattr(scaler, "transform"):
+                raise ValueError("Checkpoint scaler is invalid")
+            scaler_features = getattr(scaler, "n_features_in_", None)
+            if scaler_features is not None and scaler_features != len(feature_names):
+                raise ValueError("Checkpoint scaler feature count does not match feature names")
+
         classifier = cls(
             n_estimators=n_estimators,
             random_state=random_state,
+            scaler=scaler,
         )
         classifier.model = model
         classifier.feature_names = list(feature_names)

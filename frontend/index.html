@@ -5,6 +5,25 @@
     <link rel="icon" type="image/svg+xml" href="/favicon.svg" />
     <meta name="viewport" content="width=device-width, initial-scale=1.0" />
     <title>frontend</title>
+    <script>
+      // Apply the saved theme before first paint to avoid a flash. Keep this
+      // minimal and mirrored by ThemeProvider's fallback logic.
+      (function () {
+        var key = 'apisentry.theme';
+        var saved = null;
+        try {
+          saved = window.localStorage.getItem(key);
+        } catch (error) {
+          saved = null;
+        }
+        var theme = saved === 'light' || saved === 'dark' ? saved : 'light';
+        if ((saved !== 'light' && saved !== 'dark') &&
+            window.matchMedia && window.matchMedia('(prefers-color-scheme: dark)').matches) {
+          theme = 'dark';
+        }
+        document.documentElement.setAttribute('data-theme', theme);
+      })();
+    </script>
   </head>
   <body>
     <div id="root"></div>

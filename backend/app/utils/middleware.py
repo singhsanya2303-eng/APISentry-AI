@@ -8,8 +8,9 @@ from typing import Dict, Any, List, Optional
 import anyio
 from starlette.middleware.base import BaseHTTPMiddleware
 from starlette.requests import Request
-from starlette.responses import Response
+from starlette.responses import JSONResponse, Response
 from app.core.config import settings
+from app.core.security_events import log_security_event
 from app.services.traffic_service import save_traffic_log
 
 logger = logging.getLogger("apisentry.middleware")
@@ -269,3 +270,166 @@ class RequestLoggingMiddleware(BaseHTTPMiddleware):
             )
         except Exception as p_exc:
             logger.error("Persistence invocation failed for request %s: %s", request_id, p_exc)
+
+
+class SecurityHeadersMiddleware(BaseHTTPMiddleware):
+    """Attach conservative security headers without leaking sensitive info."""
+
+    async def dispatch(self, request: Request, call_next) -> Response:
+        response = await call_next(request)
+        if not getattr(settings, "SECURITY_HEADERS_ENABLED", True):
+            return response
+        response.headers.setdefault("X-Content-Type-Options", "nosniff")
+        response.headers.setdefault("X-Frame-Options", "DENY")
+        response.headers.setdefault("Referrer-Policy", "no-referrer")
+        response.headers.setdefault("Permissions-Policy", "camera=(), microphone=(), geolocation=()")
+        response.headers.setdefault("Cross-Origin-Resource-Policy", "same-site")
+        # Keep CSP compatible with FastAPI docs; tighten API/default policy.
+        is_docs = (
+            request.url.path.startswith("/docs")
+            or request.url.path.startswith("/redoc")
+            or request.url.path.startswith(f"{settings.API_V1_STR}/openapi.json")
+        )
+        if is_docs:
+            csp = (
+                "default-src 'self'; img-src 'self' data: https:; "
+                "style-src 'self' 'unsafe-inline' https:; "
+                "script-src 'self' 'unsafe-inline' https:; "
+                "connect-src 'self' https:; object-src 'none'; base-uri 'self'; form-action 'self'; frame-ancestors 'none'"
+            )
+        else:
+            connect_src = "'self' https:" if str(getattr(settings, "ENVIRONMENT", "")).strip().lower() == "production" else "'self' http: https:"
+            csp = (
+                "default-src 'self'; img-src 'self' data:; "
+                "style-src 'self' 'unsafe-inline'; script-src 'self'; "
+                f"connect-src {connect_src}; object-src 'none'; base-uri 'self'; form-action 'self'; frame-ancestors 'none'"
+            )
+        response.headers.setdefault("Content-Security-Policy", csp)
+        if str(getattr(settings, "ENVIRONMENT", "")).strip().lower() == "production":
+            response.headers.setdefault("Strict-Transport-Security", "max-age=31536000; includeSubDomains")
+        return response
+
+
+class RequestSizeLimitMiddleware:
+    """ASGI middleware enforcing request body size limits.
+
+    Checks Content-Length for early reject and always counts actual streamed bytes
+    (covers chunked/missing/misleading headers). Buffers up to max_bytes+1 to allow
+    replay to downstream app when within limit.
+    """
+
+    def __init__(self, app, max_body_bytes: int | None = None):
+        self.app = app
+        configured = max_body_bytes if max_body_bytes is not None else getattr(settings, "MAX_REQUEST_BODY_BYTES", 1_048_576)
+        self.max_body_bytes = max(0, int(configured))
+
+    async def __call__(self, scope, receive, send):
+        if scope.get("type") != "http":
+            await self.app(scope, receive, send)
+            return
+
+        max_bytes = self.max_body_bytes
+        headers = {k.decode("latin-1").lower(): v.decode("latin-1") for k, v in scope.get("headers", [])}
+        content_length = headers.get("content-length")
+        if content_length is not None:
+            try:
+                length = int(content_length)
+            except (TypeError, ValueError):
+                log_security_event(
+                    "request.invalid_content_length",
+                    severity="warning",
+                    path=scope.get("path", ""),
+                    method=scope.get("method", ""),
+                    client_ip=(scope.get("client") or ["unknown"])[0],
+                )
+                await self._drain_and_send_error(scope, receive, send, max_bytes, status_code=400, detail="Invalid Content-Length header")
+                return
+            if length < 0:
+                log_security_event(
+                    "request.invalid_content_length",
+                    severity="warning",
+                    path=scope.get("path", ""),
+                    method=scope.get("method", ""),
+                    client_ip=(scope.get("client") or ["unknown"])[0],
+                )
+                await self._drain_and_send_error(scope, receive, send, max_bytes, status_code=400, detail="Invalid Content-Length header")
+                return
+            if length > max_bytes:
+                log_security_event(
+                    "request.too_large",
+                    severity="warning",
+                    path=scope.get("path", ""),
+                    method=scope.get("method", ""),
+                    client_ip=(scope.get("client") or ["unknown"])[0],
+                    content_length=length,
+                    max_bytes=max_bytes,
+                )
+                await self._drain_and_send_error(scope, receive, send, max_bytes)
+                return
+
+        body = b""
+        more_body = True
+        received = 0
+        while more_body:
+            message = await receive()
+            if message.get("type") == "http.request":
+                chunk = message.get("body", b"") or b""
+                received += len(chunk)
+                if received > max_bytes:
+                    log_security_event(
+                        "request.too_large",
+                        severity="warning",
+                        path=scope.get("path", ""),
+                        method=scope.get("method", ""),
+                        client_ip=(scope.get("client") or ["unknown"])[0],
+                        max_bytes=max_bytes,
+                        streaming=True,
+                    )
+                    # Drain remaining body to avoid connection issues on keep-alive.
+                    more_body = bool(message.get("more_body", False))
+                    while more_body:
+                        drain = await receive()
+                        if drain.get("type") != "http.request":
+                            break
+                        more_body = bool(drain.get("more_body", False))
+                    await self._send_error(scope, receive, send, max_bytes)
+                    return
+                body += chunk
+                more_body = bool(message.get("more_body", False))
+            elif message.get("type") == "http.disconnect":
+                return
+            else:
+                # Unexpected message type; stop safely.
+                more_body = False
+
+        replayed = False
+
+        async def replay_receive():
+            nonlocal replayed
+            if replayed:
+                # After body replay, forward disconnect/other messages.
+                return await receive()
+            replayed = True
+            return {"type": "http.request", "body": body, "more_body": False}
+
+        await self.app(scope, replay_receive, send)
+
+    async def _drain_and_send_error(self, scope, receive, send, max_bytes: int, status_code: int = 413, detail: str = "Request payload too large"):
+        # Best-effort drain to reduce keep-alive connection issues after early reject.
+        try:
+            more_body = True
+            while more_body:
+                message = await receive()
+                if message.get("type") != "http.request":
+                    break
+                more_body = bool(message.get("more_body", False))
+        except Exception:
+            pass
+        await self._send_error(scope, receive, send, max_bytes, status_code=status_code, detail=detail)
+
+    async def _send_error(self, scope, receive, send, max_bytes: int, status_code: int = 413, detail: str = "Request payload too large"):
+        payload = {"detail": detail}
+        if status_code == 413:
+            payload["max_bytes"] = max_bytes
+        response = JSONResponse(status_code=status_code, content=payload)
+        await response(scope, receive, send)

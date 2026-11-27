@@ -8,11 +8,14 @@ Endpoint:
 """
 
 from datetime import datetime
+import logging
 from typing import Optional
 from fastapi import APIRouter, Depends, Query, HTTPException, status
 from sqlalchemy.orm import Session
 
 from app.db.session import get_db
+
+logger = logging.getLogger("apisentry.api.bruteforce")
 from app.schemas.bruteforce import BruteForceDetectionResult
 from app.detection.bruteforce_detector import BruteForceDetectorConfig
 from app.services.bruteforce_analysis_service import analyze_traffic_for_bruteforce
@@ -69,7 +72,8 @@ def analyze_bruteforce_traffic(
     except HTTPException:
         raise
     except Exception as exc:
+        logger.exception("Brute-force analysis failed")
         raise HTTPException(
             status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
-            detail=f"Database query failure during brute-force analysis: {exc}"
+            detail="Brute-force analysis could not be completed.",
         ) from exc

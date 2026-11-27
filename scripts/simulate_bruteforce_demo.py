@@ -13,15 +13,38 @@ Verifies:
      emits a 'suspicious_bruteforce_candidate' verdict with evidence.
 
 Usage:
-  python scripts/simulate_bruteforce_demo.py
+  python scripts/simulate_bruteforce_demo.py --api-key YOUR_LOCAL_API_KEY
+
+The API key may instead be supplied through the APISENTRY_DEMO_API_KEY
+environment variable. Never commit a real API key to the repository.
 """
 
 import argparse
+from collections.abc import Mapping
 import json
+import os
 import sys
 import time
 from urllib.error import HTTPError, URLError
 from urllib.request import Request, urlopen
+
+API_KEY_ENV_VAR = "APISENTRY_DEMO_API_KEY"
+
+
+def resolve_api_key(
+    explicit: str | None, environ: Mapping[str, str] | None = None
+) -> str | None:
+    """Return a supplied API key, or None when no usable value was supplied.
+
+    No default credential exists. The explicit argument takes precedence over the
+    environment variable; blank values are treated as missing. The value itself is
+    never echoed by this function.
+    """
+    source = os.environ if environ is None else environ
+    value = explicit if explicit is not None else source.get(API_KEY_ENV_VAR)
+    if value is None or not value.strip():
+        return None
+    return value
 
 
 def send_request(url: str, payload: dict) -> tuple[int, dict, dict]:
@@ -87,10 +110,23 @@ def main():
     )
     parser.add_argument(
         "--api-key",
-        default="rz0oQlqj0VLjQ9CdLjsBhXexXKuPDHJDM3qsEsdeYeY",
-        help="API Key for the security analysis endpoints",
+        default=None,
+        help=(
+            "API key for the security analysis endpoints; omit to read it from "
+            f"{API_KEY_ENV_VAR}"
+        ),
     )
     args = parser.parse_args()
+
+    api_key = resolve_api_key(args.api_key)
+    if api_key is None:
+        print(
+            "[ERROR] No API key supplied. Pass --api-key or set "
+            f"{API_KEY_ENV_VAR} in your local environment. "
+            "Never commit credentials.",
+            file=sys.stderr,
+        )
+        sys.exit(2)
 
     demo_login_url = f"{args.base_url}/demo/auth/login"
     analysis_url = f"{args.base_url}/api/v1/security/bruteforce/analyze"
@@ -160,7 +196,7 @@ def main():
     # 4. Invoke the existing Brute-Force detection analysis endpoint
     print("[PHASE 3] Invoking Brute-Force Analysis Endpoint...")
     try:
-        status_code, result = get_analysis(analysis_url, args.api_key)
+        status_code, result = get_analysis(analysis_url, api_key)
     except HTTPError as e:
         print(f"[ERROR] Analysis API call failed with HTTP {e.code}: {e.read().decode('utf-8')}")
         sys.exit(1)
