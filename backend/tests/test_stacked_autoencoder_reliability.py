@@ -8,7 +8,12 @@ from app.services.stacked_autoencoder_service import (
 
 
 def make_window(index, *, unusual=False):
-    """Create synthetic traffic for reliability testing."""
+    """Create synthetic traffic for reliability testing.
+
+    Normal windows use small deterministic cycles across request volume,
+    client diversity, and latency so the baseline is non-degenerate. The
+    unusual window remains clearly outside that baseline distribution.
+    """
     if unusual:
         return {
             "window_start": f"target-{index}",
@@ -22,16 +27,19 @@ def make_window(index, *, unusual=False):
             "max_response_time_ms": 10000.0,
         }
 
+    request_count = 10 + (index % 5)
+    mean_response_time_ms = 100.0 + (index % 5) * 5.0
+
     return {
         "window_start": f"baseline-{index}",
-        "request_count": 10,
-        "unique_client_count": 2,
-        "http_2xx_count": 9,
+        "request_count": request_count,
+        "unique_client_count": 2 + (index % 3),
+        "http_2xx_count": request_count - 1,
         "http_3xx_count": 1,
         "http_4xx_count": 0,
         "http_5xx_count": 0,
-        "mean_response_time_ms": 100.0,
-        "max_response_time_ms": 150.0,
+        "mean_response_time_ms": mean_response_time_ms,
+        "max_response_time_ms": 150.0 + (index % 5) * 7.5,
     }
 
 
@@ -58,6 +66,19 @@ def test_detector_reports_reconstruction_errors():
     assert all(
         p["threshold"] == detector.threshold
         for p in predictions
+    )
+
+    normal_error = predictions[0]["reconstruction_error"]
+    anomalous_error = predictions[1]["reconstruction_error"]
+    threshold = detector.threshold
+
+    assert normal_error < threshold, (
+        f"normal reconstruction error {normal_error!r} "
+        f"must be below threshold {threshold!r}"
+    )
+    assert anomalous_error > threshold, (
+        f"anomalous reconstruction error {anomalous_error!r} "
+        f"must be above threshold {threshold!r}"
     )
 
     assert predictions[0]["is_anomaly"] is False
